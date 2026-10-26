@@ -115,23 +115,35 @@ async function setupViewer(){
     let silver: Mesh<BufferGeometry, MeshStandardMaterial2>
     let diamondObjects: any[] = []
 
-    ring = viewer.scene.findObjectsByName('Scene')[0] as any as Mesh<BufferGeometry, MeshStandardMaterial2>
+    const sceneObjects = viewer.scene.findObjectsByName('Scene')
+    ring = (sceneObjects && sceneObjects[0]) ? sceneObjects[0] as any : viewer.scene.modelRoot as any
     silver = viewer.scene.findObjectsByName('silver')[0] as any as Mesh<BufferGeometry, MeshStandardMaterial2>
     gold = viewer.scene.findObjectsByName('gold')[0] as any as Mesh<BufferGeometry, MeshStandardMaterial2>
-    ring.rotation.set(-Math.PI / 2, 0, -Math.PI / 2)
+
+    if (ring && ring.rotation) {
+        ring.rotation.set(-Math.PI / 2, 0, -Math.PI / 2)
+    }
 
     for (const obj of diamondsObjectNames) {
         const o = viewer.scene.findObjectsByName(obj)[0]
-        diamondObjects.push(o)
+        if (o) diamondObjects.push(o)
     }
+
+    position.set(-0.17, -0.25, 8.5)
+    target.set(0, 0, 0)
+    camera.positionUpdated(true)
+    camera.targetUpdated(true)
 
     if (camera.controls) {
         camera.controls.enabled = true
         camera.controls.autoRotate = true
-        camera.controls.minDistance = 5
-        camera.controls.maxDistance = 13
+        camera.controls.autoRotateSpeed = 1.0
+        camera.controls.minDistance = 3
+        camera.controls.maxDistance = 20
         camera.controls.enablePan = false
         camera.controls.screenSpacePanning = false
+        camera.controls.target.set(0, 0, 0)
+        camera.controls.update()
     }
 
     if (isMobile) {
@@ -139,6 +151,8 @@ async function setupViewer(){
         bloom.enabled = false
         camera.setCameraOptions({fov: 65})
     }
+
+    viewer.renderer.reset()
 
     let needsUpdate = true
     function onUpdate() {
@@ -168,7 +182,9 @@ async function setupViewer(){
 
     function changeDiamondColor(_gemColor: Color) {
         for (const o of diamondObjects) {
-            o.material.color = _gemColor
+            if (o && o.material) {
+                o.material.color = _gemColor
+            }
         }
     }
 
@@ -216,8 +232,8 @@ async function setupViewer(){
     })
 
     function changeMaterialColor(_firstColor: Color, _secondColor: Color) {
-        silver.material.color = _firstColor
-        gold.material.color = _secondColor
+        if (silver && silver.material) silver.material.color = _firstColor
+        if (gold && gold.material) gold.material.color = _secondColor
     }
 
     const materialMap: Record<string, [number, number]> = {
@@ -271,7 +287,7 @@ async function setupViewer(){
 
             for (const obj of diamondsObjectNames2) {
                 const o = viewer.scene.findObjectsByName(obj)[0]
-                diamondObjects.push(o)
+                if (o) diamondObjects.push(o)
             }
             ringModel = 2
         } else {
@@ -279,25 +295,39 @@ async function setupViewer(){
             gsap.to('.loader', {x: '100%', duration: 0.8, ease: "power4.inOut", delay: 1})
             viewer.setBackground(DARK_BG)
 
-            ring = viewer.scene.findObjectsByName('Scene')[0] as any as Mesh<BufferGeometry, MeshStandardMaterial2>
+            const sc = viewer.scene.findObjectsByName('Scene')
+            ring = (sc && sc[0]) ? sc[0] as any : viewer.scene.modelRoot as any
             silver = viewer.scene.findObjectsByName('silver')[0] as any as Mesh<BufferGeometry, MeshStandardMaterial2>
             gold = viewer.scene.findObjectsByName('gold')[0] as any as Mesh<BufferGeometry, MeshStandardMaterial2>
-            ring.rotation.set(-Math.PI / 2, 0, 0)
+
+            if (ring && ring.rotation) {
+                ring.rotation.set(-Math.PI / 2, 0, 0)
+            }
 
             for (const obj of diamondsObjectNames) {
                 const o = viewer.scene.findObjectsByName(obj)[0]
-                diamondObjects.push(o)
+                if (o) diamondObjects.push(o)
             }
             ringModel = 1
         }
 
+        position.set(-0.17, -0.25, 8.5)
+        target.set(0, 0, 0)
+        camera.positionUpdated(true)
+        camera.targetUpdated(true)
+
         if (camera.controls) {
             camera.controls.autoRotate = true
-            camera.controls.minDistance = 5
-            camera.controls.maxDistance = 13
+            camera.controls.autoRotateSpeed = 1.0
+            camera.controls.minDistance = 3
+            camera.controls.maxDistance = 20
             camera.controls.enablePan = false
             camera.controls.screenSpacePanning = false
+            camera.controls.target.set(0, 0, 0)
+            camera.controls.update()
         }
+
+        viewer.renderer.reset()
     }
 }
 
