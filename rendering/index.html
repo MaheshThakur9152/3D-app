@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<title>iJewel — 3D Ring Configurator</title>
+	<meta name="description" content="Photorealistic 3D Jewelry Ring Configurator powered by WebGi">
+	<meta charset="UTF-8" />
+	<link rel="apple-touch-icon" sizes="180x180" href="assets/favicons/apple-touch-icon.png">
+	<link rel="icon" type="image/png" sizes="32x32" href="assets/favicons/favicon-32x32.png">
+	<link rel="icon" type="image/png" sizes="16x16" href="assets/favicons/favicon-16x16.png">
+	<link rel="manifest" href="assets/favicons/site.webmanifest">
+	<meta name="msapplication-TileColor" content="#E6BFBE">
+	<meta name="theme-color" content="#E6BFBE">
+
+	<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,700;1,400&family=Qwitcher+Grypen:wght@700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+	<div class="loader">
+		<svg width="48" height="48" fill="none" xmlns="http://www.w3.org/2000/svg"><mask id="a" style="mask-type:alpha" maskUnits="userSpaceOnUse" x="9" y="3" width="32" height="42"><path d="M25 44a15 15 0 1 0 0-30 15 15 0 0 0 0 30Z" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="m18 8 3-4h8l3 4-7 6-7-6Z" fill="#555" stroke="#fff" stroke-linecap="round" stroke-linejoin="round"/></mask><g mask="url(#a)"><path d="M0 0h48v48H0V0Z" fill="#52322B"/></g></svg>
+		<p>Preparing 3D Jewelry Studio...</p>
+		<div class="progress"></div>
+	</div>
+
+	<!-- Top Navigation Bar -->
+	<header class="app-header">
+		<div class="brand">
+			<h1 class="brand-title">iJewel</h1>
+			<span class="brand-subtitle">3D Ring Configurator</span>
+		</div>
+		<div class="header-actions">
+			<button class="btn-action btn-upload-trigger" title="Upload Rhino .3dm CAD or .glb 3D model">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+					<polyline points="17 8 12 3 7 8"/>
+					<line x1="12" y1="3" x2="12" y2="15"/>
+				</svg>
+				<span>Upload Model</span>
+			</button>
+			<button class="btn-action btn-roles-trigger" title="Inspect Model Hierarchy & Roles">
+				<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M12 20h9"/>
+					<path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+				</svg>
+				<span>Inspect Model</span>
+			</button>
+			<button class="btn-icon btn-rotate-toggle" title="Toggle Auto-Rotation">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+				</svg>
+			</button>
+			<button class="btn-icon btn-theme-toggle" title="Toggle Day / Night Studio Lighting">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+				</svg>
+			</button>
+			<button class="btn-icon btn-audio-toggle" title="Toggle Ambient Audio">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+					<path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+				</svg>
+			</button>
+		</div>
+	</header>
+
+	<!-- iJewel Floating Configurator Dock -->
+	<nav class="ijewel-dock">
+		<!-- Category Navigation Tabs -->
+		<div class="ijewel-tabs">
+			<button class="tab-btn active" data-tab="metals">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<circle cx="12" cy="12" r="9"/>
+					<circle cx="12" cy="12" r="4"/>
+				</svg>
+				<span>Metals</span>
+			</button>
+			<button class="tab-btn" data-tab="gems">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<polygon points="6 3 18 3 22 9 12 22 2 9"/>
+				</svg>
+				<span>Gemstones</span>
+			</button>
+			<button class="tab-btn" data-tab="models">
+				<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+					<path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+				</svg>
+				<span>Ring Design</span>
+			</button>
+		</div>
+
+		<!-- Options Panels -->
+		<div class="ijewel-panels">
+			<!-- Panel: Metals -->
+			<div class="panel-content active" id="panel-metals">
+				<div class="swatches-row">
+					<button class="swatch-item active" data-metal="default" title="18K Yellow & White Gold">
+						<span class="swatch-circle" style="background: linear-gradient(135deg, #fea04d 50%, #ffffff 50%);"></span>
+						<span class="swatch-label">Classic 18K</span>
+					</button>
+					<button class="swatch-item" data-metal="gold-gold" title="18K Solid Yellow Gold">
+						<span class="swatch-circle" style="background: #fea04d;"></span>
+						<span class="swatch-label">Yellow Gold</span>
+					</button>
+					<button class="swatch-item" data-metal="silver-silver" title="Platinum / White Gold">
+						<span class="swatch-circle" style="background: #ffffff; border: 1px solid #d4c2bf;"></span>
+						<span class="swatch-label">White Gold</span>
+					</button>
+					<button class="swatch-item" data-metal="rose-rose" title="18K Rose Gold">
+						<span class="swatch-circle" style="background: #fa8787;"></span>
+						<span class="swatch-label">Rose Gold</span>
+					</button>
+					<button class="swatch-item" data-metal="silver-gold" title="White & Yellow Gold">
+						<span class="swatch-circle" style="background: linear-gradient(135deg, #ffffff 50%, #fea04d 50%);"></span>
+						<span class="swatch-label">White & Gold</span>
+					</button>
+					<button class="swatch-item" data-metal="rose-silver" title="Rose Gold & Platinum">
+						<span class="swatch-circle" style="background: linear-gradient(135deg, #fa8787 50%, #ffffff 50%);"></span>
+						<span class="swatch-label">Rose & White</span>
+					</button>
+					<button class="swatch-item" data-metal="gold-rose" title="Yellow & Rose Gold">
+						<span class="swatch-circle" style="background: linear-gradient(135deg, #fea04d 50%, #fa8787 50%);"></span>
+						<span class="swatch-label">Yellow & Rose</span>
+					</button>
+				</div>
+			</div>
+
+			<!-- Panel: Gemstones -->
+			<div class="panel-content" id="panel-gems">
+				<div class="swatches-row">
+					<button class="swatch-item active" data-gem-preset="diamond" data-gem="#CFECEC" title="Brilliant Diamond">
+						<span class="swatch-circle gem-circle" style="background: radial-gradient(circle, #ffffff, #CFECEC);"></span>
+						<span class="swatch-label">Diamond</span>
+					</button>
+					<button class="swatch-item" data-gem-preset="ruby" data-gem="#f70db1" title="Vivid Ruby">
+						<span class="swatch-circle gem-circle" style="background: radial-gradient(circle, #ff66cc, #f70db1);"></span>
+						<span class="swatch-label">Ruby</span>
+					</button>
+					<button class="swatch-item" data-gem-preset="emerald" data-gem="#5eca00" title="Colombian Emerald">
+						<span class="swatch-circle gem-circle" style="background: radial-gradient(circle, #a8ff54, #5eca00);"></span>
+						<span class="swatch-label">Emerald</span>
+					</button>
+					<button class="swatch-item" data-gem-preset="sapphire" data-gem="#1766bb" title="Royal Sapphire">
+						<span class="swatch-circle gem-circle" style="background: radial-gradient(circle, #5ca0fa, #1766bb);"></span>
+						<span class="swatch-label">Sapphire</span>
+					</button>
+					<button class="swatch-item" data-gem-preset="aquamarine" data-gem="#62cffe" title="Aquamarine">
+						<span class="swatch-circle gem-circle" style="background: radial-gradient(circle, #aae6ff, #62cffe);"></span>
+						<span class="swatch-label">Aquamarine</span>
+					</button>
+					<button class="swatch-item" data-gem-preset="canary" data-gem="#efe75b" title="Canary Yellow Diamond">
+						<span class="swatch-circle gem-circle" style="background: radial-gradient(circle, #ffff99, #efe75b);"></span>
+						<span class="swatch-label">Canary</span>
+					</button>
+					<button class="swatch-item" data-gem-preset="pink" data-gem="#fa37d7" title="Pink Diamond">
+						<span class="swatch-circle gem-circle" style="background: radial-gradient(circle, #ff99eb, #fa37d7);"></span>
+						<span class="swatch-label">Pink Diamond</span>
+					</button>
+					<button class="swatch-item" data-gem-preset="orange" data-gem="#eb8e17" title="Mandarin Garnet">
+						<span class="swatch-circle gem-circle" style="background: radial-gradient(circle, #ffba66, #eb8e17);"></span>
+						<span class="swatch-label">Orange</span>
+					</button>
+					<button class="swatch-item" data-gem-preset="amethyst" data-gem="#c200f2" title="Amethyst">
+						<span class="swatch-circle gem-circle" style="background: radial-gradient(circle, #e066ff, #c200f2);"></span>
+						<span class="swatch-label">Amethyst</span>
+					</button>
+				</div>
+			</div>
+
+			<!-- Panel: Ring Design -->
+			<div class="panel-content" id="panel-models">
+				<div class="swatches-row models-row">
+					<button class="model-badge active" data-model="1">
+						<span class="badge-title">Solitaire 3-Stone</span>
+						<span class="badge-tag">Studio Model</span>
+					</button>
+					<button class="model-badge" data-model="2">
+						<span class="badge-title">Pavé Halo Eternity</span>
+						<span class="badge-tag">Studio Model</span>
+					</button>
+					<button class="model-badge model-custom-badge" style="display: none;" data-model="custom">
+						<span class="badge-title custom-model-name">Custom Ring</span>
+						<span class="badge-tag tag-custom">Uploaded CAD</span>
+					</button>
+				</div>
+			</div>
+		</div>
+	</nav>
+
+	<div id="webgi-canvas-container">
+		<canvas id="webgi-canvas"></canvas>
+	</div>
+
+	<script type="module" src="/src/index.ts"></script>
+</body>
+
+</html>

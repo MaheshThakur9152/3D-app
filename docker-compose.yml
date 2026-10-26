@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  cad-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - STORAGE_DIR=/app/storage
+      - CORS_ORIGIN=*
+      - QUEUE_CONCURRENCY=2
+      # Optional external Rhino.Compute service
+      # - RHINO_COMPUTE_URL=http://rhino-compute:6500/
+    volumes:
+      - ./storage:/app/storage
+    restart: unless-stopped
+
+  # Optional headless Rhino.Compute worker service
+  # rhino-compute:
+  #   image: ghcr.io/rhino-linux/docker:latest
+  #   environment:
+  #     - RHINO_TOKEN=${RHINO_TOKEN}
+  #   ports:
+  #     - "6500:6500"
