@@ -23,7 +23,7 @@ time, mark, audio, video {
 body {
 	line-height: 1;
 	overflow: hidden;
-	background-color: #22052f;
+	background-color: #E6BFBE;
 	cursor: grab;
 	font-family: $archivo;
 	scroll-behavior: smooth;
@@ -297,10 +297,9 @@ table {
 	  
 	  .gem--menu{
 		position: absolute;
-		border: 1px solid rgba(255,255,255,0.2);
+		border: 1px solid #d4b1b1;
 		bottom: 90px;
-		background: #1b0a24f0;
-		backdrop-filter: blur(10px);
+		background: #ffffffe0;
 		border-radius: 50px;
 		padding: 20px 30px;
 		visibility: hidden;
@@ -368,10 +367,9 @@ table {
 	  /* MATERIALS */
 	  .materials--menu{
 		position: absolute;
-		border: 1px solid rgba(255,255,255,0.2);
+		border: 1px solid #d4b1b1;
 		bottom: 90px;
-		background: #1b0a24f0;
-		backdrop-filter: blur(10px);
+		background: #ffffffe0;
 		border-radius: 50px;
 		padding: 20px 30px;
 		visibility: hidden;
@@ -871,8 +869,4 @@ table {
 	color: #ffffff;
 	background-color: #181818;
 	pointer-events: auto;
-}
-
-.close-gems svg path, .close-materials svg path {
-	stroke: #ffffff !important;
 }

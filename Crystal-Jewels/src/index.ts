@@ -35,6 +35,7 @@ const diamondsObjectNames2 = [
     'Object'
 ]
 
+const LIGHT_BG = new Color('#EEB7B5').convertSRGBToLinear()
 const DARK_BG = new Color(0x22052f).convertSRGBToLinear()
 
 async function setupViewer(){
@@ -54,13 +55,16 @@ async function setupViewer(){
     const target = camera.target
 
     // Interface Elements
+    const exitContainer = document.querySelector('.exit--container') as HTMLElement
     const gemMenu = document.querySelector('.gem--menu') as HTMLElement
+    const footerMenu = document.querySelector('.footer--menu') as HTMLElement
     const materialsMenu = document.querySelector('.materials--menu') as HTMLElement
     const configMaterial = document.querySelector('.config--material') as HTMLElement
     const configGem = document.querySelector('.config--gem') as HTMLElement
     const closeConfigMaterial = document.querySelector('.close-materials') as HTMLElement
     const configRing = document.querySelector('.config--ring') as HTMLElement
     const closeConfigGem = document.querySelector('.close-gems') as HTMLElement
+    let nightMode = false
     let ringModel = 1
 
     // Add WEBGi plugins
@@ -83,7 +87,7 @@ async function setupViewer(){
     await viewer.addPlugin(TemporalAAPlugin)
     await viewer.addPlugin(DiamondPlugin)
     await viewer.addPlugin(RandomizedDirectionalLightPlugin, false)
-    viewer.setBackground(DARK_BG)
+    viewer.setBackground(LIGHT_BG)
 
     ssr!.passes.ssr.passObject.lowQualityFrames = 0
     bloom.pass!.passObject.bloomIterations = 2
@@ -165,6 +169,25 @@ async function setupViewer(){
             camera.targetUpdated(true)
             needsUpdate = false
         }
+    })
+
+    // NIGHT / LIGHT MODE TOGGLE
+    function toggleNightMode() {
+        if (!nightMode) {
+            exitContainer.classList.add('night--mode--filter')
+            footerMenu.classList.add('night--mode--filter')
+            viewer.setBackground(DARK_BG)
+            nightMode = true
+        } else {
+            exitContainer.classList.remove('night--mode--filter')
+            footerMenu.classList.remove('night--mode--filter')
+            viewer.setBackground(LIGHT_BG)
+            nightMode = false
+        }
+    }
+
+    document.querySelector('.night--mode--2')?.addEventListener('click', () => {
+        toggleNightMode()
     })
 
     // GEM MENU
@@ -276,10 +299,12 @@ async function setupViewer(){
         viewer.scene.removeSceneModels()
         diamondObjects.length = 0
 
+        const bg = nightMode ? DARK_BG : LIGHT_BG
+
         if (ringModel == 1) {
             await manager.addFromPath("./assets/ring2_webgi.glb")
             gsap.to('.loader', {x: '100%', duration: 0.8, ease: "power4.inOut", delay: 1})
-            viewer.setBackground(DARK_BG)
+            viewer.setBackground(bg)
 
             ring = viewer.scene.findObjectsByName('Scene_1')[0] as any as Mesh<BufferGeometry, MeshStandardMaterial2>
             silver = viewer.scene.findObjectsByName('alliance')[0] as any as Mesh<BufferGeometry, MeshStandardMaterial2>
@@ -293,7 +318,7 @@ async function setupViewer(){
         } else {
             await manager.addFromPath("./assets/ring_webgi.glb")
             gsap.to('.loader', {x: '100%', duration: 0.8, ease: "power4.inOut", delay: 1})
-            viewer.setBackground(DARK_BG)
+            viewer.setBackground(bg)
 
             const sc = viewer.scene.findObjectsByName('Scene')
             ring = (sc && sc[0]) ? sc[0] as any : viewer.scene.modelRoot as any
