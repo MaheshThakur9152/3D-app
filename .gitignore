@@ -3,3 +3,10 @@ dist
 .parcel-cache
 .DS_Store
 *.log
+storage/uploads/*
+storage/processed/*
+!storage/uploads/.gitkeep
+!storage/processed/.gitkeep
+server/storage/
+server/*.glb
+server/*.3dm
