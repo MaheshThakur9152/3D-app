@@ -5,7 +5,7 @@
 Welcome to the 3D Jewel Web App repository! This web application showcases a collection of customizable 3D jewelry models, allowing users to interactively design their own rings.
 
 ## Live link 
-https://3d-jewelapp.netlify.app/
+https://3-d-app-three.vercel.app
 
 ## About the Project
 
