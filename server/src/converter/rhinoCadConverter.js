@@ -1,8 +1,8 @@
 /**
  * rhinoCadConverter.js
  * Ingests Rhino .3dm files using rhino3dm (OpenNURBS), extracts geometry,
- * classifies component roles, preserves diamond facet normals, transforms coordinates,
- * and produces valid GLB binary buffers and model manifests.
+ * computes facet normals for diamonds vs smooth normals for metals,
+ * groups components, normalizes dimensions, and outputs glTF Binary (.glb) + ModelManifest.
  */
 
 const rhino3dm = require('rhino3dm');
@@ -31,7 +31,7 @@ function isValidGlbSignature(buffer) {
 }
 
 // Ingest native GLB file and build semantic model manifest
-function parseGlbManifest(glbBuffer, modelId, originalFileName) {
+function parseGlbManifest(glbBuffer, modelId, originalFileName, options = {}) {
     const chunkLen = glbBuffer.readUInt32LE(12);
     const chunkType = glbBuffer.slice(16, 20).toString('ascii');
     if (chunkType !== 'JSON') {
@@ -54,6 +54,11 @@ function parseGlbManifest(glbBuffer, modelId, originalFileName) {
             const mesh = meshes[node.mesh];
             const nodeName = node.name || mesh.name || `Node_${idx}`;
 
+            const isConstruction = /\b(dummy|helper|defpoints|bounding_?box|origin_?axis)\b/i.test(nodeName);
+            if (options.excludeConstruction !== false && isConstruction) {
+                return;
+            }
+
             let triCount = 0;
             if (mesh.primitives) {
                 mesh.primitives.forEach((prim) => {
@@ -63,12 +68,19 @@ function parseGlbManifest(glbBuffer, modelId, originalFileName) {
                     if (prim.attributes && prim.attributes.POSITION !== undefined && accessors[prim.attributes.POSITION]) {
                         const posAcc = accessors[prim.attributes.POSITION];
                         if (posAcc.min && posAcc.max) {
-                            minX = Math.min(minX, posAcc.min[0]);
-                            minY = Math.min(minY, posAcc.min[1]);
-                            minZ = Math.min(minZ, posAcc.min[2]);
-                            maxX = Math.max(maxX, posAcc.max[0]);
-                            maxY = Math.max(maxY, posAcc.max[1]);
-                            maxZ = Math.max(maxZ, posAcc.max[2]);
+                            const tx = node.translation ? node.translation[0] : 0;
+                            const ty = node.translation ? node.translation[1] : 0;
+                            const tz = node.translation ? node.translation[2] : 0;
+                            const sx = node.scale ? node.scale[0] : 1;
+                            const sy = node.scale ? node.scale[1] : 1;
+                            const sz = node.scale ? node.scale[2] : 1;
+
+                            minX = Math.min(minX, posAcc.min[0] * sx + tx);
+                            minY = Math.min(minY, posAcc.min[1] * sy + ty);
+                            minZ = Math.min(minZ, posAcc.min[2] * sz + tz);
+                            maxX = Math.max(maxX, posAcc.max[0] * sx + tx);
+                            maxY = Math.max(maxY, posAcc.max[1] * sy + ty);
+                            maxZ = Math.max(maxZ, posAcc.max[2] * sz + tz);
                         }
                     }
                 });
@@ -101,19 +113,34 @@ function parseGlbManifest(glbBuffer, modelId, originalFileName) {
     const width = maxX - minX;
     const height = maxY - minY;
     const depth = maxZ - minZ;
-    const boundingRadius = Math.hypot(width / 2, height / 2, depth / 2);
+    const centerX = (minX + maxX) / 2;
+    const centerY = (minY + maxY) / 2;
+    const centerZ = (minZ + maxZ) / 2;
+    const rawBoundingRadius = Math.hypot(width / 2, height / 2, depth / 2);
+
+    const shouldScale = options.autoScale !== false && rawBoundingRadius > 0.001;
+    const scaleFactor = shouldScale ? (1.35 / rawBoundingRadius) : 1.0;
+    const shouldCenter = options.autoCentre !== false;
 
     const manifest = {
         schemaVersion: '1.0.0',
         modelId,
         originalFileName,
         timestamp: new Date().toISOString(),
-        units: 'mm',
+        units: options.sourceUnit && options.sourceUnit !== 'auto' ? options.sourceUnit : 'mm',
         boundingDimensions: {
             width: Number(width.toFixed(3)),
             height: Number(height.toFixed(3)),
             depth: Number(depth.toFixed(3)),
-            boundingRadius: Number(boundingRadius.toFixed(3))
+            boundingRadius: Number(rawBoundingRadius.toFixed(3)),
+            normalizedRadius: Number((rawBoundingRadius * scaleFactor).toFixed(3)),
+            scaleFactor: Number(scaleFactor.toFixed(6)),
+            centerOffset: [Number(centerX.toFixed(3)), Number(centerY.toFixed(3)), Number(centerZ.toFixed(3))],
+            appliedSettings: {
+                autoCentre: shouldCenter,
+                autoScale: shouldScale,
+                sourceUnit: options.sourceUnit || 'mm'
+            }
         },
         components,
         warnings: []
@@ -166,37 +193,53 @@ function classifyRole(name, layerName, triangleCount) {
     return { role: 'metal_shank', confidence: 0.75 };
 }
 
-// Extract vertices, normals, and indices from a rhino.Mesh object
-function extractMeshData(rhinoMesh) {
+// Extract vertices, normals, and indices from a rhino.Mesh object with optional unit scale
+function extractMeshData(rhinoMesh, unitScale = 1.0) {
     const vertCount = rhinoMesh.vertices().count;
     const faceCount = rhinoMesh.faces().count;
 
-    if (vertCount === 0 || faceCount === 0) return null;
-
     const positions = [];
+    const normals = [];
+    const indices = [];
+
     for (let i = 0; i < vertCount; i++) {
         const v = rhinoMesh.vertices().get(i);
-        // Rhino is Z-up: (x, y, z) -> glTF Y-up: (x, z, -y)
-        positions.push(v[0], v[2], -v[1]);
+        const vx = v.x !== undefined ? v.x : v[0];
+        const vy = v.y !== undefined ? v.y : v[1];
+        const vz = v.z !== undefined ? v.z : v[2];
+        // Rhino is Z-up: (x, y, z) -> glTF Y-up: (x, z, -y) * unitScale
+        positions.push(vx * unitScale, vz * unitScale, -vy * unitScale);
     }
 
-    const indices = [];
     for (let f = 0; f < faceCount; f++) {
         const face = rhinoMesh.faces().get(f);
-        const a = face[0];
-        const b = face[1];
-        const c = face[2];
-        const d = face[3];
-
-        indices.push(a, b, c);
-        // If quad face (c !== d), add second triangle
-        if (c !== d) {
+        const a = face[0] !== undefined ? face[0] : face.a;
+        const b = face[1] !== undefined ? face[1] : face.b;
+        const c = face[2] !== undefined ? face[2] : face.c;
+        const d = face[3] !== undefined ? face[3] : face.d;
+        const isQuad = face.isQuad !== undefined ? face.isQuad : (d !== undefined && d !== c);
+        if (isQuad) {
+            indices.push(a, b, c);
             indices.push(a, c, d);
+        } else {
+            indices.push(a, b, c);
         }
+    }
+
+    // Ensure normals exist
+    rhinoMesh.normals().computeNormals();
+    const normCount = rhinoMesh.normals().count;
+    for (let n = 0; n < normCount; n++) {
+        const norm = rhinoMesh.normals().get(n);
+        const nx = norm.x !== undefined ? norm.x : norm[0];
+        const ny = norm.y !== undefined ? norm.y : norm[1];
+        const nz = norm.z !== undefined ? norm.z : norm[2];
+        normals.push(nx, nz, -ny);
     }
 
     return {
         positions: new Float32Array(positions),
+        normals: new Float32Array(normals),
         indices: indices.length > 65535 ? new Uint32Array(indices) : new Uint16Array(indices),
         isClosed: typeof rhinoMesh.isClosed === 'function' ? rhinoMesh.isClosed() : !!rhinoMesh.isClosed
     };
@@ -210,7 +253,7 @@ class RhinoCadConverter {
 
         // Check if file is GLB
         if (isValidGlbSignature(fileBuffer)) {
-            return parseGlbManifest(fileBuffer, modelId, originalFileName);
+            return parseGlbManifest(fileBuffer, modelId, originalFileName, options);
         }
 
         if (!isValid3dmSignature(fileBuffer)) {
@@ -229,16 +272,28 @@ class RhinoCadConverter {
             throw new Error('Failed to deserialize Rhino document.');
         }
 
-        // Units
+        // Units and unit scaling factor to millimeters
         let unitSystem = 'mm';
-        if (doc.settings && doc.settings().modelUnitSystem) {
+        if (options.sourceUnit && options.sourceUnit !== 'auto') {
+            unitSystem = options.sourceUnit;
+        } else if (doc.settings && doc.settings().modelUnitSystem) {
             const val = doc.settings().modelUnitSystem.value;
-            if (val === 2) unitSystem = 'mm';
+            if (val === 1) unitSystem = 'microns';
+            else if (val === 2) unitSystem = 'mm';
             else if (val === 3) unitSystem = 'cm';
             else if (val === 4) unitSystem = 'm';
             else if (val === 8) unitSystem = 'inches';
             else unitSystem = 'mm';
         }
+
+        const unitToMmMap = {
+            'mm': 1.0,
+            'cm': 10.0,
+            'm': 1000.0,
+            'inches': 25.4,
+            'microns': 0.001
+        };
+        const unitScale = unitToMmMap[unitSystem] || 1.0;
 
         // Extract Layers
         const layers = [];
@@ -250,6 +305,19 @@ class RhinoCadConverter {
                 name: layer.name,
                 visible: layer.visible
             });
+        }
+
+        // Collect Master Block Template IDs to exclude from direct scene export
+        const idefObjectIds = new Set();
+        if (doc.instanceDefinitions) {
+            const idefCount = doc.instanceDefinitions().count;
+            for (let j = 0; j < idefCount; j++) {
+                const idef = doc.instanceDefinitions().get(j);
+                const ids = idef.getObjectIds();
+                for (const id of ids) {
+                    idefObjectIds.add(id);
+                }
+            }
         }
 
         // Traverse Objects
@@ -267,12 +335,27 @@ class RhinoCadConverter {
             if (!geom) continue;
 
             const name = attr.name || `Component_${i}`;
+
+            // Skip master block definition templates (only export real placed instances)
+            if (attr.id && idefObjectIds.has(attr.id)) {
+                warnings.push(`Master block template object '${name}' skipped from direct scene placement.`);
+                continue;
+            }
             const layerIndex = attr.layerIndex;
             const layer = layers[layerIndex] || { name: 'Default', visible: true };
 
             // Skip hidden layers/objects unless requested
-            if (!layer.visible) {
+            if (options.visibleOnly !== false && !layer.visible) {
                 warnings.push(`Object '${name}' on hidden layer '${layer.name}' skipped.`);
+                continue;
+            }
+
+            // Skip construction geometry: only exclude explicit helper objects (defpoints, dummy helpers, bounding boxes)
+            // Note: 3D solid Breps/Meshes on layers named with 'curve' (e.g. 'Creation Curves') are valid jewelry solids, not 1D curves.
+            const isConstruction = /\b(dummy|helper|defpoints|bounding_?box|origin_?axis|construction_plane)\b/i.test(name) ||
+                /^(defpoints|helpers?)$/i.test(layer.name.trim());
+            if (options.excludeConstruction !== false && isConstruction) {
+                warnings.push(`Construction object '${name}' on layer '${layer.name}' skipped.`);
                 continue;
             }
 
@@ -280,7 +363,7 @@ class RhinoCadConverter {
             let geomType = geom.constructor ? geom.constructor.name : 'Unknown';
 
             if (geomType === 'Mesh') {
-                meshData = extractMeshData(geom);
+                meshData = extractMeshData(geom, unitScale);
             } else if (geomType === 'Brep') {
                 // Check for cached render meshes on Brep faces
                 const faces = geom.faces();
@@ -296,14 +379,14 @@ class RhinoCadConverter {
                 }
 
                 if (combinedMesh.vertices().count > 0) {
-                    meshData = extractMeshData(combinedMesh);
+                    meshData = extractMeshData(combinedMesh, unitScale);
                 } else {
                     warnings.push(`Brep '${name}' (Layer: '${layer.name}') does not contain pre-computed render meshes. Save with shaded view in Rhino or connect Rhino.Compute.`);
                 }
             } else if (geomType === 'Extrusion') {
                 const renderMesh = geom.getMesh(rhino.MeshType.Render);
                 if (renderMesh) {
-                    meshData = extractMeshData(renderMesh);
+                    meshData = extractMeshData(renderMesh, unitScale);
                 } else {
                     warnings.push(`Extrusion '${name}' lacks render mesh.`);
                 }
@@ -322,10 +405,10 @@ class RhinoCadConverter {
                                 if (rm) combinedMesh.append(rm);
                             }
                             if (combinedMesh.vertices().count > 0) {
-                                meshData = extractMeshData(combinedMesh);
+                                meshData = extractMeshData(combinedMesh, unitScale);
                             }
                         } else if (transformedGeom.constructor.name === 'Mesh') {
-                            meshData = extractMeshData(transformedGeom);
+                            meshData = extractMeshData(transformedGeom, unitScale);
                         }
                     }
                 }
@@ -392,7 +475,7 @@ class RhinoCadConverter {
             throw new Error('No renderable mesh geometry could be extracted from this .3dm file. Ensure the file contains meshes or was saved with render meshes.');
         }
 
-        // Global dimensions & bounding radius
+        // Global dimensions & bounding radius in millimeters
         const width = maxX - minX;
         const height = maxY - minY;
         const depth = maxZ - minZ;
@@ -402,25 +485,30 @@ class RhinoCadConverter {
         const rawBoundingRadius = Math.hypot(width / 2, height / 2, depth / 2);
 
         // Normalize scale for WebGi scene standard (radius ~1.35 units)
-        // Rings modeled in mm (15-30mm) scale to ~1.35 so ground shadows, SSAO, SSR, and camera framing fit perfectly.
-        const scaleFactor = rawBoundingRadius > 3.0 ? (1.35 / rawBoundingRadius) : 1.0;
+        const shouldScale = options.autoScale !== false && rawBoundingRadius > 0.001;
+        const scaleFactor = shouldScale ? (1.35 / rawBoundingRadius) : 1.0;
+        const shouldCenter = options.autoCentre !== false;
 
-        // Center components to world origin and apply scale normalization
+        const ox = shouldCenter ? centerX : 0;
+        const oy = shouldCenter ? centerY : 0;
+        const oz = shouldCenter ? centerZ : 0;
+
+        // Apply centering and scale normalization
         for (const comp of extractedComponents) {
             for (let p = 0; p < comp.positions.length; p += 3) {
-                comp.positions[p] = (comp.positions[p] - centerX) * scaleFactor;
-                comp.positions[p + 1] = (comp.positions[p + 1] - centerY) * scaleFactor;
-                comp.positions[p + 2] = (comp.positions[p + 2] - centerZ) * scaleFactor;
+                comp.positions[p] = (comp.positions[p] - ox) * scaleFactor;
+                comp.positions[p + 1] = (comp.positions[p + 1] - oy) * scaleFactor;
+                comp.positions[p + 2] = (comp.positions[p + 2] - oz) * scaleFactor;
             }
             comp.posMin = [
-                (comp.posMin[0] - centerX) * scaleFactor,
-                (comp.posMin[1] - centerY) * scaleFactor,
-                (comp.posMin[2] - centerZ) * scaleFactor
+                (comp.posMin[0] - ox) * scaleFactor,
+                (comp.posMin[1] - oy) * scaleFactor,
+                (comp.posMin[2] - oz) * scaleFactor
             ];
             comp.posMax = [
-                (comp.posMax[0] - centerX) * scaleFactor,
-                (comp.posMax[1] - centerY) * scaleFactor,
-                (comp.posMax[2] - centerZ) * scaleFactor
+                (comp.posMax[0] - ox) * scaleFactor,
+                (comp.posMax[1] - oy) * scaleFactor,
+                (comp.posMax[2] - oz) * scaleFactor
             ];
         }
 
@@ -443,7 +531,14 @@ class RhinoCadConverter {
                 height: Number(height.toFixed(3)),
                 depth: Number(depth.toFixed(3)),
                 boundingRadius: Number(rawBoundingRadius.toFixed(3)),
-                normalizedRadius: Number((rawBoundingRadius * scaleFactor).toFixed(3))
+                normalizedRadius: Number((rawBoundingRadius * scaleFactor).toFixed(3)),
+                scaleFactor: Number(scaleFactor.toFixed(6)),
+                centerOffset: [Number(centerX.toFixed(3)), Number(centerY.toFixed(3)), Number(centerZ.toFixed(3))],
+                appliedSettings: {
+                    autoCentre: shouldCenter,
+                    autoScale: shouldScale,
+                    sourceUnit: unitSystem
+                }
             },
             components: extractedComponents.map(c => ({
                 nodeId: c.nodeId,

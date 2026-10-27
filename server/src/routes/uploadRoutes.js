@@ -24,8 +24,8 @@ const upload = multer({
 function createUploadRouter({ jobQueue }) {
     const router = express.Router();
 
-    // POST /api/v1/models/upload
-    router.post('/upload', upload.single('file'), (req, res) => {
+    // POST /api/v1/upload
+    router.post('/upload', upload.single('file'), async (req, res) => {
         try {
             if (!req.file || !req.file.buffer) {
                 return res.status(400).json({
@@ -45,11 +45,23 @@ function createUploadRouter({ jobQueue }) {
             const modelId = uuidv4();
             const jobId = uuidv4();
 
-            const job = jobQueue.createJob({
+            let options = {};
+            if (req.body && req.body.options) {
+                try {
+                    options = typeof req.body.options === 'string' ? JSON.parse(req.body.options) : req.body.options;
+                } catch {
+                    options = {};
+                }
+            } else if (req.body) {
+                options = { ...req.body };
+            }
+
+            const job = await jobQueue.createJob({
                 jobId,
                 modelId,
                 originalFileName: req.file.originalname,
-                fileBuffer: buffer
+                fileBuffer: buffer,
+                options
             });
 
             return res.status(202).json({
@@ -69,8 +81,8 @@ function createUploadRouter({ jobQueue }) {
     });
 
     // GET /api/v1/jobs/:jobId
-    router.get('/jobs/:jobId', (req, res) => {
-        const job = jobQueue.getJob(req.params.jobId);
+    router.get('/jobs/:jobId', async (req, res) => {
+        const job = await jobQueue.getJob(req.params.jobId);
         if (!job) {
             return res.status(404).json({
                 error: 'Not Found',
@@ -83,6 +95,7 @@ function createUploadRouter({ jobQueue }) {
             modelId: job.modelId,
             status: job.status,
             progress: job.progress,
+            stage: job.stage,
             error: job.error,
             result: job.result,
             createdAt: job.createdAt,

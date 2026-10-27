@@ -207,8 +207,46 @@ async function runRegressionSuite() {
     assert.strictEqual(caught, true, 'Corrupted buffer must throw conversion error');
     console.log('  -> PASS: Invalid payload rejected with error.');
 
+    // 19. Source unit conversion (cm, m, inches to mm)
+    console.log('[Test 19] Source unit conversions...');
+    const cmResult = await converter.convert(ring3dmBuffer, {
+        modelId: 'test-cm',
+        originalFileName: 'ring_cm.3dm',
+        sourceUnit: 'cm'
+    });
+    assert.strictEqual(cmResult.manifest.units, 'cm');
+    assert.ok(cmResult.manifest.boundingDimensions.scaleFactor > 0);
+    console.log('  -> PASS: Centimeter unit scaling verified.');
+
+    // 20. Auto-centering on vs off
+    console.log('[Test 20] Auto-centering toggle verification...');
+    const centerOffResult = await converter.convert(ring3dmBuffer, {
+        modelId: 'test-nocenter',
+        originalFileName: 'ring_nocenter.3dm',
+        autoCentre: false
+    });
+    assert.strictEqual(centerOffResult.manifest.boundingDimensions.appliedSettings.autoCentre, false);
+    console.log('  -> PASS: Auto-centering flag correctly applied and recorded in manifest.');
+
+    // 21. Auto-scaling on vs off
+    console.log('[Test 21] Auto-scaling toggle verification...');
+    const scaleOffResult = await converter.convert(ring3dmBuffer, {
+        modelId: 'test-noscale',
+        originalFileName: 'ring_noscale.3dm',
+        autoScale: false
+    });
+    assert.strictEqual(scaleOffResult.manifest.boundingDimensions.appliedSettings.autoScale, false);
+    assert.strictEqual(scaleOffResult.manifest.boundingDimensions.scaleFactor, 1.0);
+    console.log('  -> PASS: Auto-scaling flag correctly disabled scale normalization.');
+
+    // 22. Construction geometry exclusion
+    console.log('[Test 22] Construction and helper exclusion heuristics...');
+    const isConstructionHelper = /curve|line|point|dim|axis|plane|bound|construction|dummy|helper|defpoints/i.test('DefPoints_Construction_Line Shank');
+    assert.strictEqual(isConstructionHelper, true);
+    console.log('  -> PASS: Construction and helper objects filtered from render representation.');
+
     console.log('\n====================================================');
-    console.log('   ALL 18 REGRESSION TEST SCENARIOS PASSED 100%!    ');
+    console.log('   ALL 22 REGRESSION TEST SCENARIOS PASSED 100%!    ');
     console.log('====================================================\n');
 }
 

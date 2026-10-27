@@ -1,13 +1,15 @@
 /**
  * ModelInspector.ts
  * Interactive model hierarchy inspector, search filter, component visibility toggles,
- * role assignment dropdowns, and sync with 3D canvas picking.
+ * camera focus tools, transform properties inspector, role assignment dropdowns,
+ * and real-time sync with 3D canvas picking.
  */
 
 import { MaterialRoleBinder } from "../cad/MaterialRoleBinder";
 import { CanvasPicker, MeshSelectionEvent } from "../cad/CanvasPicker";
 import { ModelManifest, ComponentRole, ManifestComponent } from "../cad/ModelManifest";
-import { ViewerApp } from "webgi";
+import { ViewerApp, Box3, Sphere } from "webgi";
+import { autoFrameCamera } from "../cad/CameraFraming";
 
 export class ModelInspector {
     private viewer: ViewerApp;
@@ -19,6 +21,7 @@ export class ModelInspector {
     private apiBaseUrl: string;
     private activeFilter: string = 'all';
     private searchQuery: string = '';
+    private selectedNodeId: string | null = null;
 
     constructor(
         viewer: ViewerApp,
@@ -47,14 +50,65 @@ export class ModelInspector {
         drawer.innerHTML = `
             <div class="inspector-header">
                 <div class="header-titles">
-                    <h3>Model Hierarchy</h3>
+                    <h3>Scene Hierarchy</h3>
                     <span class="components-count-badge">0 Components</span>
                 </div>
-                <button class="inspector-close-btn">&times;</button>
+                <button class="inspector-close-btn" title="Close Panel">&times;</button>
+            </div>
+
+            <!-- Selected Component Transform Inspector -->
+            <div class="inspector-selection-box" style="display: none;">
+                <div class="selection-box-header">
+                    <span class="selection-box-title">Selected Component</span>
+                    <button class="btn-clear-selection">&times;</button>
+                </div>
+                <div class="selection-box-name">--</div>
+                <div class="selection-box-meta">
+                    <span class="badge-layer selection-layer-badge">Default</span>
+                    <span class="badge-tris selection-tris-badge">0 tris</span>
+                </div>
+
+                <div class="transform-section">
+                    <div class="transform-title">Transform Properties</div>
+                    <div class="transform-grid">
+                        <div class="transform-row">
+                            <span class="transform-label">Pos:</span>
+                            <span class="transform-val transform-pos">0.0, 0.0, 0.0</span>
+                        </div>
+                        <div class="transform-row">
+                            <span class="transform-label">Rot:</span>
+                            <span class="transform-val transform-rot">0°, 0°, 0°</span>
+                        </div>
+                        <div class="transform-row">
+                            <span class="transform-label">Scale:</span>
+                            <span class="transform-val transform-scale">1.0, 1.0, 1.0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="selection-actions-row">
+                    <button class="btn-action-focus">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <line x1="22" y1="12" x2="18" y2="12"/>
+                            <line x1="6" y1="12" x2="2" y2="12"/>
+                            <line x1="12" y1="6" x2="12" y2="2"/>
+                            <line x1="12" y1="22" x2="12" y2="18"/>
+                        </svg>
+                        <span>Focus View</span>
+                    </button>
+                    <button class="btn-action-vis">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                            <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                        <span>Toggle Vis</span>
+                    </button>
+                </div>
             </div>
 
             <div class="inspector-search-bar">
-                <input type="text" class="inspector-search-input" placeholder="Search by name or layer..." />
+                <input type="text" class="inspector-search-input" placeholder="Search by component name or layer..." />
             </div>
 
             <div class="inspector-filter-pills">
@@ -73,6 +127,10 @@ export class ModelInspector {
 
         drawer.querySelector(".inspector-close-btn")?.addEventListener("click", () => this.hide());
         drawer.querySelector(".btn-save-roles")?.addEventListener("click", () => this.saveRolesToServer());
+        drawer.querySelector(".btn-clear-selection")?.addEventListener("click", () => {
+            this.picker.clearSelection();
+            this.clearSelectionBox();
+        });
 
         const searchInput = drawer.querySelector(".inspector-search-input") as HTMLInputElement;
         searchInput?.addEventListener("input", (e) => {
@@ -126,6 +184,7 @@ export class ModelInspector {
         card.querySelector(".card-close-btn")?.addEventListener("click", () => {
             this.picker.clearSelection();
             this.floatingCard.style.display = "none";
+            this.clearSelectionBox();
         });
 
         return card;
@@ -135,6 +194,7 @@ export class ModelInspector {
         this.picker.onSelection((event: MeshSelectionEvent | null) => {
             if (!event || !event.mesh) {
                 this.floatingCard.style.display = "none";
+                this.clearSelectionBox();
                 return;
             }
 
@@ -142,6 +202,10 @@ export class ModelInspector {
             const components = this.roleBinder.getComponents();
             const comp = components.find(c => c.nodeId === nodeId || c.nodeName === event.nodeName);
 
+            this.selectedNodeId = comp?.nodeId || null;
+            this.updateSelectionBox(event.mesh, comp, event.nodeName);
+
+            // Update floating card
             const titleEl = this.floatingCard.querySelector(".card-node-name") as HTMLElement;
             const layerEl = this.floatingCard.querySelector(".card-layer-badge") as HTMLElement;
             const triEl = this.floatingCard.querySelector(".card-tri-badge") as HTMLElement;
@@ -161,7 +225,82 @@ export class ModelInspector {
             };
 
             this.floatingCard.style.display = "flex";
+            this.highlightItemInList(this.selectedNodeId);
         });
+    }
+
+    private updateSelectionBox(mesh: any, comp?: ManifestComponent, nodeName?: string): void {
+        const box = this.container.querySelector(".inspector-selection-box") as HTMLElement;
+        if (!box) return;
+
+        box.style.display = "block";
+        const nameEl = box.querySelector(".selection-box-name") as HTMLElement;
+        const layerEl = box.querySelector(".selection-layer-badge") as HTMLElement;
+        const trisEl = box.querySelector(".selection-tris-badge") as HTMLElement;
+        const posEl = box.querySelector(".transform-pos") as HTMLElement;
+        const rotEl = box.querySelector(".transform-rot") as HTMLElement;
+        const scaleEl = box.querySelector(".transform-scale") as HTMLElement;
+
+        nameEl.textContent = nodeName || comp?.nodeName || mesh.name || "Component";
+        layerEl.textContent = comp?.sourceLayer || "Default";
+        trisEl.textContent = `${comp?.geometryStats?.triangleCount || 0} tris`;
+
+        // Read transforms
+        const p = mesh.position || { x: 0, y: 0, z: 0 };
+        const r = mesh.rotation || { x: 0, y: 0, z: 0 };
+        const s = mesh.scale || { x: 1, y: 1, z: 1 };
+
+        posEl.textContent = `${p.x.toFixed(2)}, ${p.y.toFixed(2)}, ${p.z.toFixed(2)}`;
+        rotEl.textContent = `${((r.x * 180) / Math.PI).toFixed(0)}°, ${((r.y * 180) / Math.PI).toFixed(0)}°, ${((r.z * 180) / Math.PI).toFixed(0)}°`;
+        scaleEl.textContent = `${s.x.toFixed(2)}, ${s.y.toFixed(2)}, ${s.z.toFixed(2)}`;
+
+        // Wire Action buttons
+        const focusBtn = box.querySelector(".btn-action-focus") as HTMLElement;
+        focusBtn.onclick = () => this.focusMesh(mesh);
+
+        const visBtn = box.querySelector(".btn-action-vis") as HTMLElement;
+        visBtn.onclick = () => {
+            mesh.visible = !mesh.visible;
+            this.roleBinder.invalidateRenderingHistory();
+            this.renderComponentsList();
+        };
+    }
+
+    private clearSelectionBox(): void {
+        const box = this.container.querySelector(".inspector-selection-box") as HTMLElement;
+        if (box) box.style.display = "none";
+        this.selectedNodeId = null;
+        this.highlightItemInList(null);
+    }
+
+    private highlightItemInList(nodeId: string | null): void {
+        const items = this.container.querySelectorAll(".inspector-item");
+        items.forEach(el => {
+            const id = el.getAttribute("data-node-id");
+            el.classList.toggle("selected", id === nodeId);
+        });
+    }
+
+    public focusMesh(mesh: any): void {
+        if (!mesh) return;
+        this.picker.selectMesh(mesh);
+
+        const camera = this.viewer.scene.activeCamera;
+        if (!camera) return;
+
+        try {
+            if (mesh.geometry) mesh.geometry.computeBoundingBox();
+            const box = new Box3().setFromObject(mesh);
+            const sphere = box.getBoundingSphere(new Sphere());
+            const radius = Math.max(sphere.radius, 0.2);
+
+            autoFrameCamera(camera, camera.controls, radius * 1.6, true, () => {
+                camera.positionUpdated(true);
+                camera.targetUpdated(true);
+            });
+        } catch {
+            // Focus fallback
+        }
     }
 
     public show(manifest: ModelManifest): void {
@@ -172,6 +311,15 @@ export class ModelInspector {
 
     public hide(): void {
         this.container.style.display = "none";
+    }
+
+    public toggle(): void {
+        if (this.container.style.display === "none" || !this.container.style.display) {
+            const manifest = this.currentManifest || (this.viewer as any).__currentManifest;
+            if (manifest) this.show(manifest);
+        } else {
+            this.hide();
+        }
     }
 
     private renderComponentsList(): void {
@@ -212,12 +360,16 @@ export class ModelInspector {
 
         filtered.forEach(comp => {
             const mesh = this.roleBinder.getMeshByNodeId(comp.nodeId);
+            const isVisible = mesh ? mesh.visible : true;
+            const isSelected = comp.nodeId === this.selectedNodeId;
+
             const item = document.createElement("div");
-            item.className = "inspector-item";
+            item.className = `inspector-item ${isSelected ? "selected" : ""}`;
+            item.setAttribute("data-node-id", comp.nodeId);
             item.innerHTML = `
                 <div class="item-left">
-                    <button class="btn-vis-toggle" title="Toggle visibility">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <button class="btn-vis-toggle" title="Toggle component visibility">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="opacity: ${isVisible ? "1" : "0.25"}">
                             <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
                             <circle cx="12" cy="12" r="3"/>
                         </svg>
@@ -231,7 +383,7 @@ export class ModelInspector {
                     </div>
                 </div>
                 <div class="item-right">
-                    <button class="btn-focus-mesh" title="Select and highlight in 3D">
+                    <button class="btn-focus-mesh" title="Select and focus camera in 3D">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <circle cx="12" cy="12" r="10"/>
                             <line x1="22" y1="12" x2="18" y2="12"/>
@@ -250,24 +402,38 @@ export class ModelInspector {
                 </div>
             `;
 
+            // Toggle visibility in 3D
             const visBtn = item.querySelector(".btn-vis-toggle") as HTMLElement;
-            visBtn.addEventListener("click", () => {
+            visBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
                 if (mesh) {
                     mesh.visible = !mesh.visible;
-                    visBtn.style.opacity = mesh.visible ? "1" : "0.3";
+                    const svg = visBtn.querySelector("svg") as HTMLElement;
+                    if (svg) svg.style.opacity = mesh.visible ? "1" : "0.25";
                     this.roleBinder.invalidateRenderingHistory();
                 }
             });
 
+            // Focus and Select
             const focusBtn = item.querySelector(".btn-focus-mesh") as HTMLElement;
-            focusBtn.addEventListener("click", () => {
+            focusBtn.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (mesh) {
+                    this.focusMesh(mesh);
+                }
+            });
+
+            // Click row to select
+            item.addEventListener("click", () => {
                 if (mesh) {
                     this.picker.selectMesh(mesh);
                 }
             });
 
+            // Role selection
             const roleSelect = item.querySelector(".item-role-select") as HTMLSelectElement;
             roleSelect.addEventListener("change", (e) => {
+                e.stopPropagation();
                 const newRole = (e.target as HTMLSelectElement).value as ComponentRole;
                 this.roleBinder.updateRole(comp.nodeId, newRole);
             });
@@ -278,31 +444,41 @@ export class ModelInspector {
 
     private async saveRolesToServer(): Promise<void> {
         if (!this.currentManifest || !this.currentManifest.modelId) {
-            this.hide();
-            return;
-        }
-
-        const modelId = this.currentManifest.modelId;
-        if (modelId.startsWith("builtin-")) {
-            this.hide();
+            alert("No custom CAD model is currently loaded to persist roles.");
             return;
         }
 
         const components = this.roleBinder.getComponents();
-        const roleUpdates: Record<string, ComponentRole> = {};
-        for (const c of components) {
-            roleUpdates[c.nodeId] = c.role;
+        const rolesPayload: Record<string, ComponentRole> = {};
+        for (const comp of components) {
+            rolesPayload[comp.nodeId] = comp.role;
         }
 
+        const saveBtn = this.container.querySelector(".btn-save-roles") as HTMLButtonElement;
+        const originalText = saveBtn.textContent || "Save Role Mappings";
+        saveBtn.textContent = "Saving...";
+        saveBtn.disabled = true;
+
         try {
-            await fetch(`${this.apiBaseUrl}/api/v1/models/${modelId}/roles`, {
+            const res = await fetch(`${this.apiBaseUrl}/api/v1/models/${this.currentManifest.modelId}/roles`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ roleUpdates })
+                body: JSON.stringify({ roles: rolesPayload })
             });
-            this.hide();
-        } catch {
-            this.hide();
+
+            if (!res.ok) {
+                throw new Error(`Server returned ${res.status}`);
+            }
+
+            saveBtn.textContent = "Saved Successfully!";
+            setTimeout(() => {
+                saveBtn.textContent = originalText;
+                saveBtn.disabled = false;
+            }, 1800);
+        } catch (err: any) {
+            alert(`Failed to save role mappings: ${err.message}`);
+            saveBtn.textContent = originalText;
+            saveBtn.disabled = false;
         }
     }
 }

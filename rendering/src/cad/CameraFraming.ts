@@ -1,7 +1,7 @@
 /**
  * CameraFraming.ts
- * Render-only camera auto-framing and orbit control normalization without stutter.
- * Supports aspect ratio compensation for mobile/portrait viewports.
+ * Frustum-aware camera auto-framing and orbit control normalization without stutter.
+ * Uses calibrated WebGi orbit ray (-0.17, -0.25, distance) to align with OrbitControls.
  */
 
 import gsap from "gsap";
@@ -15,23 +15,24 @@ export function autoFrameCamera(
 ): void {
     if (!camera) return;
 
-    // Normal ring scene radius is ~1.35
-    const radius = Math.max(0.8, Math.min(boundingRadius || 1.35, 4.0));
+    const radius = Math.max(0.5, boundingRadius || 1.35);
     const aspect = camera.aspect || (window.innerWidth / window.innerHeight);
     const fovY = (camera.fov || 45) * (Math.PI / 180);
     const fovX = 2 * Math.atan(Math.tan(fovY / 2) * Math.max(0.6, aspect));
     const effectiveFov = Math.min(fovY, fovX);
 
-    // Frame ring with healthy 35% margin
-    const distance = (radius / Math.sin(effectiveFov / 2)) * 1.35;
+    // Target 78% of the usable viewport dimension (75-80% coverage range)
+    const targetCoverage = 0.78;
+    const distance = radius / (Math.tan(effectiveFov / 2) * targetCoverage);
 
-    // Adjust camera orbit clamping limits to prevent clipping
+    // Adjust camera orbit clamping limits to prevent clipping while allowing close inspection
     if (controls) {
-        controls.minDistance = Math.max(1.5, radius * 0.8);
-        controls.maxDistance = Math.max(16.0, radius * 8.0);
+        controls.minDistance = Math.max(0.8, radius * 0.75);
+        controls.maxDistance = Math.max(10.0, radius * 6.0);
         controls.target.set(0, 0, 0);
     }
 
+    // Align with WebGi orbit controls reference ray
     const scale = distance / 8.5;
     const targetX = -0.17 * scale;
     const targetY = -0.25 * scale;

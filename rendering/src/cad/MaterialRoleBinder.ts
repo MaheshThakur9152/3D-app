@@ -122,6 +122,11 @@ export class MaterialRoleBinder {
     private currentCenterGemPreset: GemstonePreset = GEMSTONE_PRESETS.diamond;
     private currentAccentGemPreset: GemstonePreset = GEMSTONE_PRESETS.diamond;
 
+    // Active Finish & Optical Parameters
+    private currentMetalRoughness = 0.18;
+    private currentDiamondBrilliance = 1.35;
+    private currentDiamondDispersion = 0.044;
+
     constructor(viewer: ViewerApp) {
         this.viewer = viewer;
     }
@@ -204,12 +209,12 @@ export class MaterialRoleBinder {
         if (!mesh.material || mesh.material.isDiamondMaterial) {
             mesh.material = new MeshStandardMaterial2({
                 color: color,
-                roughness: 0.18,
+                roughness: this.currentMetalRoughness,
                 metalness: 1.0
             });
         } else {
             mesh.material.color = color;
-            if (mesh.material.roughness !== undefined) mesh.material.roughness = 0.18;
+            if (mesh.material.roughness !== undefined) mesh.material.roughness = this.currentMetalRoughness;
             if (mesh.material.metalness !== undefined) mesh.material.metalness = 1.0;
         }
     }
@@ -223,20 +228,31 @@ export class MaterialRoleBinder {
             // Update in-place without replacing shader or reallocating
             mesh.material.color = gemColor;
             mesh.material.refractiveIndex = preset.refractiveIndex;
-            mesh.material.dispersion = preset.dispersion;
+            mesh.material.dispersion = this.currentDiamondDispersion;
             mesh.material.absorptionFactor = preset.absorptionFactor;
-            mesh.material.envMapIntensity = preset.envMapIntensity;
+            mesh.material.envMapIntensity = this.currentDiamondBrilliance;
         } else if (typeof (diamondPlugin as any).makeDiamond === 'function') {
-            (diamondPlugin as any).prepareDiamondMesh(mesh, { cacheKey: mesh.uuid || mesh.name });
-            (diamondPlugin as any).makeDiamond(mesh.material, { cacheKey: mesh.uuid || mesh.name }, {
-                color: gemColor,
-                refractiveIndex: preset.refractiveIndex,
-                dispersion: preset.dispersion,
-                reflectivity: 0.5,
-                rayBounces: 5,
-                absorptionFactor: preset.absorptionFactor,
-                envMapIntensity: preset.envMapIntensity
-            });
+            try {
+                (diamondPlugin as any).prepareDiamondMesh(mesh, { cacheKey: mesh.uuid || mesh.name });
+                (diamondPlugin as any).makeDiamond(mesh.material, { cacheKey: mesh.uuid || mesh.name }, {
+                    color: gemColor,
+                    refractiveIndex: preset.refractiveIndex,
+                    dispersion: preset.dispersion,
+                    reflectivity: 0.5,
+                    rayBounces: 5,
+                    absorptionFactor: preset.absorptionFactor,
+                    envMapIntensity: preset.envMapIntensity
+                });
+            } catch (err) {
+                console.warn(`[MaterialRoleBinder] Diamond shader binding failed for ${mesh.name}, fallback to refractive standard:`, err);
+                if (mesh.material) {
+                    mesh.material.color = gemColor;
+                    if (mesh.material.roughness !== undefined) mesh.material.roughness = 0.05;
+                    if (mesh.material.metalness !== undefined) mesh.material.metalness = 0.0;
+                    if (mesh.material.transmission !== undefined) mesh.material.transmission = 0.95;
+                    if (mesh.material.ior !== undefined) mesh.material.ior = preset.refractiveIndex;
+                }
+            }
         }
     }
 
@@ -368,6 +384,237 @@ export class MaterialRoleBinder {
 
     public getUnassignedMeshes(): any[] {
         return this.unassignedMeshes;
+    }
+
+    public setMetalRoughness(roughness: number): void {
+        this.currentMetalRoughness = Math.max(0.01, Math.min(1.0, roughness));
+        const metals = [...this.shankMeshes, ...this.headMeshes, ...this.prongMeshes, ...this.unassignedMeshes];
+        for (const m of metals) {
+            if (m.material && !m.material.isDiamondMaterial) {
+                m.material.roughness = this.currentMetalRoughness;
+                if (m.material.metalness !== undefined) m.material.metalness = 1.0;
+            }
+        }
+        this.invalidateRenderingHistory();
+    }
+
+    public setMetalFinish(finish: 'satin' | 'standard' | 'high_polish'): void {
+        const map = {
+            satin: 0.45,
+            standard: 0.18,
+            high_polish: 0.04
+        };
+        this.setMetalRoughness(map[finish] ?? 0.18);
+    }
+
+    public setDiamondBrilliance(intensity: number): void {
+        this.currentDiamondBrilliance = Math.max(0.2, Math.min(3.0, intensity));
+        const gems = [...this.centerStoneMeshes, ...this.accentStoneMeshes];
+        for (const g of gems) {
+            if (g.material) {
+                g.material.envMapIntensity = this.currentDiamondBrilliance;
+            }
+        }
+        this.invalidateRenderingHistory();
+    }
+
+    public setDiamondDispersion(dispersion: number): void {
+        this.currentDiamondDispersion = Math.max(0.0, Math.min(0.1, dispersion));
+        const gems = [...this.centerStoneMeshes, ...this.accentStoneMeshes];
+        for (const g of gems) {
+            if (g.material) {
+                g.material.dispersion = this.currentDiamondDispersion;
+            }
+        }
+        this.invalidateRenderingHistory();
+    }
+
+    public getMetalRoughness(): number {
+        return this.currentMetalRoughness;
+    }
+
+    public getDiamondBrilliance(): number {
+        return this.currentDiamondBrilliance;
+    }
+
+    public getDiamondDispersion(): number {
+        return this.currentDiamondDispersion;
+    }
+
+    public applyMetalColor(colorHex: string, role = 'all_metals'): void {
+        const color = new Color(colorHex);
+        if (role === 'all_metals' || role === 'metal_shank') {
+            this.currentShankColor = color;
+            for (const m of this.shankMeshes) {
+                if (m.material && !m.material.isDiamondMaterial) m.material.color = color;
+            }
+        }
+        if (role === 'all_metals' || role === 'metal_head') {
+            this.currentHeadColor = color;
+            for (const m of this.headMeshes) {
+                if (m.material && !m.material.isDiamondMaterial) m.material.color = color;
+            }
+        }
+        if (role === 'all_metals' || role === 'metal_prongs') {
+            this.currentProngColor = color;
+            for (const m of this.prongMeshes) {
+                if (m.material && !m.material.isDiamondMaterial) m.material.color = color;
+            }
+        }
+        for (const m of this.unassignedMeshes) {
+            if (m.material && !m.material.isDiamondMaterial) m.material.color = this.currentShankColor;
+        }
+        this.invalidateRenderingHistory();
+    }
+
+    public applyMetalFinish(roughness: number, metalness = 1.0, role = 'all_metals'): void {
+        this.currentMetalRoughness = Math.max(0.01, Math.min(1.0, roughness));
+        let targets = [...this.shankMeshes, ...this.headMeshes, ...this.prongMeshes, ...this.unassignedMeshes];
+        if (role === 'metal_shank') targets = this.shankMeshes;
+        else if (role === 'metal_head') targets = this.headMeshes;
+        else if (role === 'metal_prongs') targets = this.prongMeshes;
+
+        for (const m of targets) {
+            if (m.material && !m.material.isDiamondMaterial) {
+                m.material.roughness = this.currentMetalRoughness;
+                if (m.material.metalness !== undefined) m.material.metalness = metalness;
+            }
+        }
+        this.invalidateRenderingHistory();
+    }
+
+    public applyGemstonePreset(preset: GemstonePreset, role = 'all_gemstones'): void {
+        const diamondPlugin = this.viewer.getPlugin(DiamondPlugin);
+        let targets: any[] = [];
+        if (role === 'all_gemstones') {
+            targets = [...this.centerStoneMeshes, ...this.accentStoneMeshes];
+            this.currentCenterGemPreset = preset;
+            this.currentAccentGemPreset = preset;
+        } else if (role === 'diamond' || role === 'center') {
+            targets = this.centerStoneMeshes;
+            this.currentCenterGemPreset = preset;
+        } else if (role === 'accent_stone' || role === 'accent') {
+            targets = this.accentStoneMeshes;
+            this.currentAccentGemPreset = preset;
+        }
+
+        for (const m of targets) {
+            this.applyDiamondMaterial(m, preset, diamondPlugin);
+        }
+        this.invalidateRenderingHistory();
+    }
+
+    public applyGemstoneOpticalParameters(params: {
+        color?: string;
+        refractiveIndex?: number;
+        dispersion?: number;
+        absorptionFactor?: number;
+        envMapIntensity?: number;
+    }, role = 'all_gemstones'): void {
+        let targets = [...this.centerStoneMeshes, ...this.accentStoneMeshes];
+        if (role === 'diamond' || role === 'center') targets = this.centerStoneMeshes;
+        else if (role === 'accent_stone' || role === 'accent') targets = this.accentStoneMeshes;
+
+        for (const m of targets) {
+            if (m.material) {
+                if (params.color) m.material.color = new Color(params.color);
+                if (params.refractiveIndex !== undefined) {
+                    m.material.refractiveIndex = params.refractiveIndex;
+                    if (m.material.ior !== undefined) m.material.ior = params.refractiveIndex;
+                }
+                if (params.dispersion !== undefined) m.material.dispersion = params.dispersion;
+                if (params.absorptionFactor !== undefined) m.material.absorptionFactor = params.absorptionFactor;
+                if (params.envMapIntensity !== undefined) m.material.envMapIntensity = params.envMapIntensity;
+            }
+        }
+        this.invalidateRenderingHistory();
+    }
+
+    public applyGemstonePresetToComponent(nodeId: string, preset: GemstonePreset): void {
+        let item = this.componentMap.get(nodeId);
+        if (!item) {
+            for (const [id, val] of this.componentMap.entries()) {
+                if (val.comp.nodeName === nodeId || val.mesh?.name === nodeId) {
+                    item = val;
+                    break;
+                }
+            }
+        }
+        if (!item || !item.mesh) return;
+
+        const mesh = item.mesh;
+        const diamondPlugin = this.viewer.getPlugin(DiamondPlugin);
+
+        // Ensure mesh has its own unique cloned material instance so other stones are not modified
+        if (mesh.material && typeof mesh.material.clone === 'function' && !mesh.material.__uniqueInstance) {
+            mesh.material = mesh.material.clone();
+            mesh.material.__uniqueInstance = true;
+        }
+
+        this.applyDiamondMaterial(mesh, preset, diamondPlugin);
+        this.invalidateRenderingHistory();
+    }
+
+    public applyGemstoneParamsToComponent(nodeId: string, params: {
+        color?: string;
+        refractiveIndex?: number;
+        dispersion?: number;
+        absorptionFactor?: number;
+        envMapIntensity?: number;
+    }): void {
+        let item = this.componentMap.get(nodeId);
+        if (!item) {
+            for (const [id, val] of this.componentMap.entries()) {
+                if (val.comp.nodeName === nodeId || val.mesh?.name === nodeId) {
+                    item = val;
+                    break;
+                }
+            }
+        }
+        if (!item || !item.mesh) return;
+
+        const mesh = item.mesh;
+        if (mesh.material && typeof mesh.material.clone === 'function' && !mesh.material.__uniqueInstance) {
+            mesh.material = mesh.material.clone();
+            mesh.material.__uniqueInstance = true;
+        }
+
+        if (params.color) mesh.material.color = new Color(params.color);
+        if (params.refractiveIndex !== undefined) {
+            mesh.material.refractiveIndex = params.refractiveIndex;
+            if (mesh.material.ior !== undefined) mesh.material.ior = params.refractiveIndex;
+        }
+        if (params.dispersion !== undefined) mesh.material.dispersion = params.dispersion;
+        if (params.absorptionFactor !== undefined) mesh.material.absorptionFactor = params.absorptionFactor;
+        if (params.envMapIntensity !== undefined) mesh.material.envMapIntensity = params.envMapIntensity;
+
+        this.invalidateRenderingHistory();
+    }
+
+    public applyMetalPresetToComponent(nodeId: string, colorHex: string, roughness: number, metalness = 1.0): void {
+        let item = this.componentMap.get(nodeId);
+        if (!item) {
+            for (const [id, val] of this.componentMap.entries()) {
+                if (val.comp.nodeName === nodeId || val.mesh?.name === nodeId) {
+                    item = val;
+                    break;
+                }
+            }
+        }
+        if (!item || !item.mesh) return;
+
+        const mesh = item.mesh;
+        if (mesh.material && typeof mesh.material.clone === 'function' && !mesh.material.__uniqueInstance) {
+            mesh.material = mesh.material.clone();
+            mesh.material.__uniqueInstance = true;
+        }
+
+        this.applyMetalMaterial(mesh, new Color(colorHex));
+        if (mesh.material) {
+            mesh.material.roughness = roughness;
+            mesh.material.metalness = metalness;
+        }
+        this.invalidateRenderingHistory();
     }
 
     public clear(): void {

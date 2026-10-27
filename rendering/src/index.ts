@@ -26,10 +26,8 @@ import { CanvasPicker } from "./cad/CanvasPicker"
 import { ModelInspector } from "./ui/ModelInspector"
 import { UploadModal } from "./ui/UploadModal"
 import { RoleMappingModal } from "./ui/RoleMappingModal"
+import { StudioSettings } from "./ui/StudioSettings"
 import { autoFrameCamera } from "./cad/CameraFraming"
-
-const LIGHT_BG = new Color('#EEB7B5').convertSRGBToLinear()
-const DARK_BG = new Color(0x22052f).convertSRGBToLinear()
 
 // Synthetic manifests for built-in models
 const BUILTIN_MANIFEST_RING1: ModelManifest = {
@@ -81,7 +79,6 @@ async function setupViewer() {
     const position = camera.position
     const target = camera.target
 
-    let nightMode = false
     let currentModelTag = "1"
 
     // Preserved exact 8-pass WebGi rendering pipeline
@@ -104,15 +101,20 @@ async function setupViewer() {
     await viewer.addPlugin(TemporalAAPlugin)
     await viewer.addPlugin(DiamondPlugin)
     await viewer.addPlugin(RandomizedDirectionalLightPlugin, false)
-    viewer.setBackground(LIGHT_BG)
+
+    // Studio Environment & Background
+    const studio = new StudioSettings(viewer)
+    studio.applyCurrentConfig()
 
     ssr!.passes.ssr.passObject.lowQualityFrames = 0
     bloom.pass!.passObject.bloomIterations = 2
     ssao.passes.ssao.passObject.material.defines.NUM_SAMPLES = 4
 
-    // Initial camera placement
+    // Initial camera placement (calibrated for WebGi studio orbit ray)
     position.set(-0.17, -0.25, 8.5)
     target.set(0, 0, 0)
+    camera.positionUpdated(true)
+    camera.targetUpdated(true)
 
     // WebGi loader progress bar
     const importer = manager.importer as AssetImporter
@@ -180,6 +182,17 @@ async function setupViewer() {
         }
     })
 
+    // Responsive window resize observer
+    let resizeTimer: any = null
+    window.addEventListener('resize', () => {
+        clearTimeout(resizeTimer)
+        resizeTimer = setTimeout(() => {
+            const currentManifest = dynamicLoader.getCurrentManifest()
+            const radius = currentManifest?.boundingDimensions ? (currentManifest.boundingDimensions as any).normalizedRadius || 1.35 : 1.35
+            autoFrameCamera(camera, camera.controls, radius, false, onUpdate)
+        }, 150)
+    })
+
     // UI ELEMENTS - Header Actions
     const btnUpload = document.querySelector('.btn-upload-trigger') as HTMLButtonElement | null
     const btnRoles = document.querySelector('.btn-roles-trigger') as HTMLButtonElement | null
@@ -210,13 +223,19 @@ async function setupViewer() {
         }
     })
 
-    // Theme Toggle (Day / Night Studio Lighting)
+    // Theme Toggle (Quick switch between Blush Pink and Velvet Dark)
     btnTheme?.addEventListener('click', () => {
-        nightMode = !nightMode
-        document.body.classList.toggle('night-mode', nightMode)
-        btnTheme.classList.toggle('active', nightMode)
-        viewer.setBackground(nightMode ? DARK_BG : LIGHT_BG)
-        viewer.renderer.reset()
+        const isDark = studio.getCurrentPresetId() === 'dark'
+        const next = isDark ? 'pink' : 'dark'
+        studio.applyPreset(next)
+        btnTheme.classList.toggle('active', !isDark)
+        document.body.classList.toggle('night-mode', !isDark)
+
+        // Sync Studio tab buttons
+        const studioButtons = document.querySelectorAll('#panel-studio .swatch-item')
+        studioButtons.forEach(b => {
+            b.classList.toggle('active', b.getAttribute('data-studio') === next)
+        })
     })
 
     // Background Audio Loop
@@ -256,7 +275,7 @@ async function setupViewer() {
 
             // Camera behavior on tab change
             const currentManifest = dynamicLoader.getCurrentManifest()
-            const radius = currentManifest?.boundingDimensions ? currentManifest.boundingDimensions.boundingRadius : 1.35
+            const radius = currentManifest?.boundingDimensions ? (currentManifest.boundingDimensions as any).normalizedRadius || 1.35 : 1.35
 
             if (targetTab === 'gems') {
                 // Macro zoom to gemstone facets
@@ -339,6 +358,120 @@ async function setupViewer() {
         })
     })
 
+    // Studio Environment Swatches
+    const studioSwatches = document.querySelectorAll('#panel-studio .swatch-item')
+    studioSwatches.forEach(swatch => {
+        swatch.addEventListener('click', () => {
+            const studioKey = swatch.getAttribute('data-studio')
+            if (!studioKey) return
+
+            studioSwatches.forEach(s => s.classList.remove('active'))
+            swatch.classList.add('active')
+
+            studio.applyPreset(studioKey)
+            document.body.classList.toggle('night-mode', studioKey === 'dark')
+            btnTheme?.classList.toggle('active', studioKey === 'dark')
+        })
+    })
+
+    // Viewport Quick Actions
+    const btnFit = document.querySelector('.btn-fit-model') as HTMLButtonElement | null;
+    const btnResetView = document.querySelector('.btn-reset-view') as HTMLButtonElement | null;
+
+    btnFit?.addEventListener('click', () => {
+        dynamicLoader.fitModel();
+    });
+
+    btnResetView?.addEventListener('click', () => {
+        dynamicLoader.resetView();
+    });
+
+    // Metal Polish Finish Presets & Roughness Slider
+    const finishBtns = document.querySelectorAll('.btn-finish');
+    const roughnessSlider = document.getElementById('metal-roughness-slider') as HTMLInputElement | null;
+    const valRoughness = document.querySelector('.val-roughness') as HTMLElement | null;
+
+    finishBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const finish = btn.getAttribute('data-finish') as any;
+            if (!finish) return;
+            finishBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            roleBinder.setMetalFinish(finish);
+            const r = roleBinder.getMetalRoughness();
+            if (roughnessSlider) roughnessSlider.value = r.toString();
+            if (valRoughness) valRoughness.textContent = r.toFixed(2);
+        });
+    });
+
+    roughnessSlider?.addEventListener('input', (e) => {
+        const val = parseFloat((e.target as HTMLInputElement).value);
+        roleBinder.setMetalRoughness(val);
+        if (valRoughness) valRoughness.textContent = val.toFixed(2);
+        finishBtns.forEach(b => b.classList.remove('active'));
+    });
+
+    // Diamond Brilliance & Dispersion Sliders
+    const brillianceSlider = document.getElementById('diamond-brilliance-slider') as HTMLInputElement | null;
+    const valBrilliance = document.querySelector('.val-brilliance') as HTMLElement | null;
+    const dispersionSlider = document.getElementById('diamond-dispersion-slider') as HTMLInputElement | null;
+    const valDispersion = document.querySelector('.val-dispersion') as HTMLElement | null;
+
+    brillianceSlider?.addEventListener('input', (e) => {
+        const val = parseFloat((e.target as HTMLInputElement).value);
+        roleBinder.setDiamondBrilliance(val);
+        if (valBrilliance) valBrilliance.textContent = val.toFixed(2);
+    });
+
+    dispersionSlider?.addEventListener('input', (e) => {
+        const val = parseFloat((e.target as HTMLInputElement).value);
+        roleBinder.setDiamondDispersion(val);
+        if (valDispersion) valDispersion.textContent = val.toFixed(3);
+    });
+
+    // Custom Studio Background Color Picker
+    const customBgInput = document.getElementById('studio-custom-bg') as HTMLInputElement | null;
+    customBgInput?.addEventListener('input', (e) => {
+        const color = (e.target as HTMLInputElement).value;
+        studio.setCustomBackgroundColor(color);
+        studioSwatches.forEach(s => s.classList.remove('active'));
+    });
+
+    // Studio Ground & Shadow Toggles
+    const toggleGroundVis = document.getElementById('toggle-ground-visible') as HTMLInputElement | null;
+    const toggleGroundShadows = document.getElementById('toggle-ground-shadows') as HTMLInputElement | null;
+    const toggleGroundRefl = document.getElementById('toggle-ground-reflections') as HTMLInputElement | null;
+
+    toggleGroundVis?.addEventListener('change', (e) => {
+        studio.setGroundVisible((e.target as HTMLInputElement).checked);
+    });
+
+    toggleGroundShadows?.addEventListener('change', (e) => {
+        studio.setGroundShadows((e.target as HTMLInputElement).checked);
+    });
+
+    toggleGroundRefl?.addEventListener('change', (e) => {
+        studio.setGroundReflections((e.target as HTMLInputElement).checked);
+    });
+
+    // Environment Rotation & Intensity Sliders
+    const envRotSlider = document.getElementById('env-rotation-slider') as HTMLInputElement | null;
+    const valEnvRot = document.querySelector('.val-env-rot') as HTMLElement | null;
+    const envIntSlider = document.getElementById('env-intensity-slider') as HTMLInputElement | null;
+    const valEnvInt = document.querySelector('.val-env-int') as HTMLElement | null;
+
+    envRotSlider?.addEventListener('input', (e) => {
+        const deg = parseFloat((e.target as HTMLInputElement).value);
+        studio.setEnvironmentRotation(deg);
+        if (valEnvRot) valEnvRot.textContent = `${deg}°`;
+    });
+
+    envIntSlider?.addEventListener('input', (e) => {
+        const val = parseFloat((e.target as HTMLInputElement).value);
+        studio.setEnvironmentIntensity(val);
+        if (valEnvInt) valEnvInt.textContent = val.toFixed(1);
+    });
+
     // Model Switching (Design Badges)
     let customModelUrl: string | null = null
     let customModelManifest: ModelManifest | null = null
@@ -375,7 +508,6 @@ async function setupViewer() {
     })
 
     async function transitionLoadModel(url: string, manifest: ModelManifest, applyRotation: boolean) {
-        const bg = nightMode ? DARK_BG : LIGHT_BG
         canvasPicker.clearSelection()
 
         gsap.to('.loader', {
@@ -389,7 +521,7 @@ async function setupViewer() {
                     const r = (sc && sc[0]) ? sc[0] as any : viewer.scene.modelRoot as any
                     if (r && r.rotation) r.rotation.set(-Math.PI / 2, 0, -Math.PI / 2)
                 }
-                viewer.setBackground(bg)
+                studio.applyPreset(studio.getCurrentPresetId())
                 gsap.to('.loader', { x: '100%', duration: 0.5, ease: "power3.inOut", delay: 0.2 })
             }
         })
@@ -412,28 +544,6 @@ async function setupViewer() {
             btnRoles.style.display = 'flex'
         }
     })
-
-    // Check if server already has a processed model available (e.g. from previous upload session)
-    try {
-        const serverCheck = await fetch('http://localhost:5000/api/v1/models/6926ff82-eb91-4f69-97ab-0de74b9771fb/manifest')
-        if (serverCheck.ok) {
-            const uploadedManifest = await serverCheck.json()
-            customModelManifest = uploadedManifest
-            customModelUrl = 'http://localhost:5000/api/v1/models/6926ff82-eb91-4f69-97ab-0de74b9771fb/model.glb'
-
-            if (customBadge) {
-                customBadge.style.display = 'flex'
-            }
-            if (customTitle) {
-                customTitle.textContent = uploadedManifest.originalFileName || "Uploaded Ring"
-            }
-            if (btnRoles) {
-                btnRoles.style.display = 'flex'
-            }
-        }
-    } catch {
-        // Server check optional fallback
-    }
 }
 
 setupViewer()

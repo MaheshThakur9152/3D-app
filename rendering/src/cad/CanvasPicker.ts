@@ -10,7 +10,11 @@ import { Raycaster, Vector2, BoxHelper, ViewerApp } from "webgi";
 export interface MeshSelectionEvent {
     mesh: any;
     nodeName: string;
+    parentName?: string;
     point?: any;
+    position?: [number, number, number];
+    rotation?: [number, number, number];
+    scale?: [number, number, number];
 }
 
 export class CanvasPicker {
@@ -34,19 +38,20 @@ export class CanvasPicker {
 
     private initEvents(): void {
         this.canvas.addEventListener('pointerdown', (e: PointerEvent) => {
+            if (e.button !== 0) return; // Only primary button initiates pick
             this.pointerDownPos.set(e.clientX, e.clientY);
             this.pointerDownTime = performance.now();
         });
 
         this.canvas.addEventListener('pointerup', (e: PointerEvent) => {
-            if (!this.enabled) return;
+            if (!this.enabled || e.button !== 0) return;
 
             const deltaX = Math.abs(e.clientX - this.pointerDownPos.x);
             const deltaY = Math.abs(e.clientY - this.pointerDownPos.y);
             const elapsed = performance.now() - this.pointerDownTime;
 
-            // Only treat as picking click if pointer moved < 5px and click duration < 350ms
-            if (deltaX < 5 && deltaY < 5 && elapsed < 350) {
+            // Only treat as picking click if pointer moved < 6px and duration < 350ms
+            if (deltaX < 6 && deltaY < 6 && elapsed < 350) {
                 this.performPick(e.clientX, e.clientY);
             }
         });
@@ -64,13 +69,21 @@ export class CanvasPicker {
 
         this.raycaster.setFromCamera(mouse, camera);
 
-        // Gather all renderable meshes under model root
+        // Gather all renderable jewelry meshes, excluding ground, helper, or gizmos
         const meshes: any[] = [];
-        this.viewer.scene.modelRoot.traverse((obj: any) => {
-            if (obj.isMesh && obj.visible && obj !== this.highlightHelper) {
-                meshes.push(obj);
-            }
-        });
+        // WebGi's scene.modelRoot is an IModel wrapper; get the actual Object3D
+        const sceneRoot = (this.viewer.scene.modelRoot as any)?.modelObject || this.viewer.scene.modelRoot;
+        if (sceneRoot && typeof sceneRoot.traverse === 'function') {
+            sceneRoot.traverse((obj: any) => {
+                if (obj.isMesh && obj.visible && obj !== this.highlightHelper) {
+                    const name = (obj.name || '').toLowerCase();
+                    const isHelper = /ground|helper|grid|axis|shadow|gizmo|baker/i.test(name);
+                    if (!isHelper && !obj.isGroundMesh && !obj.userData?.isGround) {
+                        meshes.push(obj);
+                    }
+                }
+            });
+        }
 
         const intersects = this.raycaster.intersectObjects(meshes, false);
 
@@ -96,13 +109,16 @@ export class CanvasPicker {
 
         // Create luxury gold outline box around selected mesh without touching its material
         try {
-            this.highlightHelper = new BoxHelper(mesh, 0xfea04d as any);
+            if (mesh.updateMatrixWorld) mesh.updateMatrixWorld(true);
+            this.highlightHelper = new BoxHelper(mesh, 0xd4af37 as any);
+            this.highlightHelper.raycast = () => {}; // Never intercept raycasts
             if (this.highlightHelper.material) {
                 this.highlightHelper.material.depthTest = false;
                 this.highlightHelper.material.transparent = true;
-                this.highlightHelper.material.opacity = 0.9;
-                this.highlightHelper.renderOrder = 999;
+                this.highlightHelper.material.opacity = 0.95;
+                this.highlightHelper.renderOrder = 9999;
             }
+            this.highlightHelper.update();
             this.viewer.scene.add(this.highlightHelper);
             this.viewer.renderer.reset();
         } catch {
@@ -110,10 +126,34 @@ export class CanvasPicker {
         }
 
         if (this.onSelectionCallback) {
+            const parentName = mesh.parent && mesh.parent.name && mesh.parent.name !== 'Scene' && mesh.parent.name !== 'SceneRoot'
+                ? mesh.parent.name
+                : undefined;
+
+            const pos: [number, number, number] = [
+                parseFloat((mesh.position?.x || 0).toFixed(2)),
+                parseFloat((mesh.position?.y || 0).toFixed(2)),
+                parseFloat((mesh.position?.z || 0).toFixed(2))
+            ];
+            const rot: [number, number, number] = [
+                parseFloat((((mesh.rotation?.x || 0) * 180) / Math.PI).toFixed(0)),
+                parseFloat((((mesh.rotation?.y || 0) * 180) / Math.PI).toFixed(0)),
+                parseFloat((((mesh.rotation?.z || 0) * 180) / Math.PI).toFixed(0))
+            ];
+            const sc: [number, number, number] = [
+                parseFloat((mesh.scale?.x || 1).toFixed(2)),
+                parseFloat((mesh.scale?.y || 1).toFixed(2)),
+                parseFloat((mesh.scale?.z || 1).toFixed(2))
+            ];
+
             this.onSelectionCallback({
                 mesh,
                 nodeName: mesh.name || 'Unnamed Component',
-                point
+                parentName,
+                point,
+                position: pos,
+                rotation: rot,
+                scale: sc
             });
         }
     }

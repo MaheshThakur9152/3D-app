@@ -96,9 +96,9 @@ function computeSmoothNormals(positions, indices) {
     }
 
     return {
-        positions,
+        positions: positions instanceof Float32Array ? positions : new Float32Array(positions),
         normals,
-        indices
+        indices: indices instanceof Uint16Array || indices instanceof Uint32Array ? indices : (indices.length > 65535 ? new Uint32Array(indices) : new Uint16Array(indices))
     };
 }
 

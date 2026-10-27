@@ -3,6 +3,8 @@ dist
 .parcel-cache
 .DS_Store
 *.log
+.env
+*.env
 storage/uploads/*
 storage/processed/*
 !storage/uploads/.gitkeep

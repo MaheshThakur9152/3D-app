@@ -1,27 +1,96 @@
-version: '3.8'
-
 services:
-  cad-backend:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mahesh3d-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: mahesh3d
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: devpassword123
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mahesh3d"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: mahesh3d-redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
     build:
       context: .
       dockerfile: Dockerfile.server
-    ports:
-      - "5000:5000"
-    environment:
-      - PORT=5000
-      - STORAGE_DIR=/app/storage
-      - CORS_ORIGIN=*
-      - QUEUE_CONCURRENCY=2
-      # Optional external Rhino.Compute service
-      # - RHINO_COMPUTE_URL=http://rhino-compute:6500/
-    volumes:
-      - ./storage:/app/storage
+    container_name: mahesh3d-api
     restart: unless-stopped
+    environment:
+      PORT: 5000
+      STORAGE_DIR: /app/storage
+      DATABASE_URL: postgresql://postgres:devpassword123@postgres:5432/mahesh3d
+      REDIS_URL: redis://redis:6379
+      QUEUE_CONCURRENCY: 2
+      CORS_ORIGIN: "*"
+    volumes:
+      - cad_storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "const http = require('http'); http.get('http://127.0.0.1:5000/api/v1/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1));"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
-  # Optional headless Rhino.Compute worker service
-  # rhino-compute:
-  #   image: ghcr.io/rhino-linux/docker:latest
-  #   environment:
-  #     - RHINO_TOKEN=${RHINO_TOKEN}
-  #   ports:
-  #     - "6500:6500"
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: mahesh3d-worker
+    command: ["node", "src/worker.js"]
+    restart: unless-stopped
+    environment:
+      STORAGE_DIR: /app/storage
+      DATABASE_URL: postgresql://postgres:devpassword123@postgres:5432/mahesh3d
+      REDIS_URL: redis://redis:6379
+      QUEUE_CONCURRENCY: 2
+    volumes:
+      - cad_storage:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: rendering/Dockerfile
+    container_name: mahesh3d-web
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  postgres_data:
+  cad_storage:
