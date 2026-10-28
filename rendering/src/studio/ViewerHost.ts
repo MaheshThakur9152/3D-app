@@ -152,6 +152,10 @@ export class ViewerHost {
             const manifest = this.dynamicLoader?.getCurrentManifest();
             const comp = manifest?.components.find(c => c.nodeId === nodeId || c.nodeName === nodeId);
 
+            const mat = Array.isArray(ev.mesh.material) ? ev.mesh.material[0] : ev.mesh.material;
+            const materialName = mat?.name || (mat?.isDiamond ? 'Diamond' : (mat ? 'PBR Material' : 'None'));
+            const isCustomized = !!ev.mesh.userData?.__userConfigured;
+
             const compInfo = {
                 nodeId,
                 nodeName: ev.mesh.name || ev.nodeName || 'Unnamed Component',
@@ -161,7 +165,9 @@ export class ViewerHost {
                 rotation: ev.rotation,
                 scale: ev.scale,
                 sourceLayer: comp?.sourceLayer,
-                isMerged: false
+                isMerged: false,
+                materialName,
+                isCustomized
             };
             if (this.onSelectionChangeCallback) {
                 this.onSelectionChangeCallback(nodeId, compInfo);
@@ -335,6 +341,18 @@ export class ViewerHost {
 
     public applyMetalPresetToComponent(nodeId: string, colorHex: string, roughness: number, metalness = 1.0) {
         this.roleBinder?.applyMetalPresetToComponent(nodeId, colorHex, roughness, metalness);
+    }
+
+    public resetComponentMaterial(nodeId: string) {
+        this.roleBinder?.resetComponentMaterial(nodeId);
+    }
+
+    public resetAllMaterials() {
+        this.roleBinder?.resetAllMaterials();
+    }
+
+    public getUserMaterialAssignments(): Record<string, any> {
+        return this.roleBinder?.getUserMaterialAssignments() || {};
     }
 
     public selectParent(nodeId?: string) {

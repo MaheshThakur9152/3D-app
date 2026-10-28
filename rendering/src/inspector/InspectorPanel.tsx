@@ -20,6 +20,8 @@ export interface SelectedComponentDetail {
     scale?: [number, number, number];
     sourceLayer?: string;
     isMerged?: boolean;
+    materialName?: string;
+    isCustomized?: boolean;
 }
 
 interface InspectorPanelProps {
@@ -33,6 +35,7 @@ interface InspectorPanelProps {
     onUpdateRole: (nodeId: string, role: ComponentRole) => void;
     onApplyGemstoneToSelected?: (preset: any) => void;
     onApplyMetalToSelected?: (colorHex: string, roughness: number) => void;
+    onResetComponentMaterial?: (nodeId: string) => void;
     onClose: () => void;
 
     // Studio & Camera controls
@@ -77,6 +80,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     onUpdateRole,
     onApplyGemstoneToSelected,
     onApplyMetalToSelected,
+    onResetComponentMaterial,
     onClose,
     studioPreset = 'white',
     groundShadows = true,
@@ -191,6 +195,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                             <div className="selection-box-meta">
                                 <span className="badge-layer">{selectedComp.sourceLayer || 'Default Layer'}</span>
                                 <span className={`badge-role role-${selectedComp.role}`}>{selectedComp.role}</span>
+                                {selectedDetail?.materialName && (
+                                    <span className="badge-layer" title="Current Material">{selectedDetail.materialName}</span>
+                                )}
                                 {selectedDetail?.isMerged && (
                                     <span className="badge-role role-unassigned">Merged Geometry</span>
                                 )}
@@ -284,6 +291,29 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                                             </button>
                                         ))}
                                     </div>
+                                </div>
+                            )}
+
+                            {/* Reset to baseline source material */}
+                            {onResetComponentMaterial && (
+                                <div style={{ marginTop: '10px' }}>
+                                    <button
+                                        style={{
+                                            width: '100%',
+                                            padding: '6px 8px',
+                                            fontSize: '10px',
+                                            fontWeight: 600,
+                                            border: '1px solid #dcdce2',
+                                            borderRadius: '6px',
+                                            background: '#ffffff',
+                                            color: '#666666',
+                                            cursor: 'pointer'
+                                        }}
+                                        onClick={() => onResetComponentMaterial(selectedComp.nodeId)}
+                                        title="Restore original imported baseline material"
+                                    >
+                                        ↺ Restore Source Material
+                                    </button>
                                 </div>
                             )}
                         </div>

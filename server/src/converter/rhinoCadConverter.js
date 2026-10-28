@@ -303,7 +303,8 @@ class RhinoCadConverter {
             layers.push({
                 index: l,
                 name: layer.name,
-                visible: layer.visible
+                visible: layer.visible,
+                color: layer.color || null
             });
         }
 
@@ -450,6 +451,32 @@ class RhinoCadConverter {
                 if (pz < minZ) minZ = pz; if (pz > maxZ) maxZ = pz;
             }
 
+            // Extract source CAD material or color where supported
+            let sourceColor = null;
+            let sourceMetallic = null;
+            let sourceRoughness = null;
+
+            if (attr.materialIndex >= 0 && doc.materials && attr.materialIndex < doc.materials().count) {
+                try {
+                    const rMat = doc.materials().get(attr.materialIndex);
+                    if (rMat && rMat.diffuseColor) {
+                        const dc = rMat.diffuseColor;
+                        sourceColor = [dc.r / 255, dc.g / 255, dc.b / 255, (dc.a !== undefined ? dc.a : 255) / 255];
+                        if (rMat.shine !== undefined) {
+                            sourceRoughness = Math.max(0.05, Math.min(1.0, 1.0 - (rMat.shine / 1.0) * 0.8));
+                        }
+                    }
+                } catch (_) {}
+            }
+
+            if (!sourceColor) {
+                if (attr.objectColor && (attr.objectColor.r > 0 || attr.objectColor.g > 0 || attr.objectColor.b > 0)) {
+                    sourceColor = [attr.objectColor.r / 255, attr.objectColor.g / 255, attr.objectColor.b / 255, 1.0];
+                } else if (layer && layer.color && (layer.color.r > 0 || layer.color.g > 0 || layer.color.b > 0)) {
+                    sourceColor = [layer.color.r / 255, layer.color.g / 255, layer.color.b / 255, 1.0];
+                }
+            }
+
             extractedComponents.push({
                 nodeId: `node_${i}_${name.replace(/[^a-zA-Z0-9_-]/g, '_')}`,
                 nodeName: name,
@@ -457,6 +484,9 @@ class RhinoCadConverter {
                 role,
                 roleConfidence: classification.confidence,
                 defaultMaterialPreset: isGemstone ? 'diamond_clear' : (role === 'metal_shank' ? 'gold_yellow' : 'platinum'),
+                sourceColor,
+                sourceMetallic,
+                sourceRoughness,
                 positions: processed.positions,
                 normals: processed.normals,
                 indices: processed.indices,

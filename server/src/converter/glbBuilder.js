@@ -87,49 +87,42 @@ function buildGLB(components, metadata = {}) {
     const paddedBinaryBuffer = pad > 0 ? Buffer.concat([binaryBuffer, Buffer.alloc(pad)]) : binaryBuffer;
 
     const materials = components.map((comp) => {
-        const isDiamond = comp.role === 'diamond' || comp.role === 'colored_gemstone' || comp.role === 'accent_stone';
-        if (isDiamond) {
-            return {
-                name: comp.nodeName || 'diamond',
-                pbrMetallicRoughness: {
-                    baseColorFactor: [0.95, 0.95, 1.0, 1.0],
-                    metallicFactor: 0.0,
-                    roughnessFactor: 0.0
-                },
-                extensions: {
-                    WEBGI_materials_diamond: {
-                        name: 'diamond',
-                        type: 'DiamondMaterial',
-                        isDiamond: true,
-                        isDiamondMaterial: true,
-                        isDiamondMaterialParameters: true,
-                        refractiveIndex: 2.417,
-                        dispersion: 0.012,
-                        reflectivity: 0.5,
-                        rayBounces: 5,
-                        geometryFactor: 0.5,
-                        absorptionFactor: 1.0,
-                        envMapIntensity: 1.25,
-                        squashFactor: 0.98,
-                        diamondOrientedEnvMap: 0,
-                        boostFactors: { x: 0.892, y: 0.892, z: 0.98595, isVector3: true }
-                    }
-                }
-            };
-        } else {
-            return {
-                name: comp.nodeName || 'metal',
-                pbrMetallicRoughness: {
-                    baseColorFactor: [0.99, 0.78, 0.35, 1.0], // Yellow gold default
-                    metallicFactor: 1.0,
-                    roughnessFactor: 0.18
-                }
-            };
+        let baseColorFactor = [0.75, 0.75, 0.75, 1.0]; // Neutral fallback
+        let metallicFactor = 0.1;
+        let roughnessFactor = 0.5;
+
+        if (comp.sourceColor && Array.isArray(comp.sourceColor) && comp.sourceColor.length >= 3) {
+            baseColorFactor = [
+                comp.sourceColor[0],
+                comp.sourceColor[1],
+                comp.sourceColor[2],
+                comp.sourceColor[3] !== undefined ? comp.sourceColor[3] : 1.0
+            ];
+            if (comp.sourceMetallic !== null && comp.sourceMetallic !== undefined) {
+                metallicFactor = comp.sourceMetallic;
+            } else if (comp.role && comp.role.startsWith('metal')) {
+                metallicFactor = 0.8;
+                roughnessFactor = 0.2;
+            }
+            if (comp.sourceRoughness !== null && comp.sourceRoughness !== undefined) {
+                roughnessFactor = comp.sourceRoughness;
+            }
+        } else if (comp.role && comp.role.startsWith('metal')) {
+            metallicFactor = 0.7;
+            roughnessFactor = 0.3;
         }
+
+        return {
+            name: comp.nodeName || 'material',
+            pbrMetallicRoughness: {
+                baseColorFactor,
+                metallicFactor,
+                roughnessFactor
+            }
+        };
     });
 
-    const hasDiamonds = components.some(c => c.role === 'diamond' || c.role === 'colored_gemstone' || c.role === 'accent_stone');
-    const extensionsUsed = hasDiamonds ? ['WEBGI_materials_diamond'] : [];
+    const extensionsUsed = [];
 
     const gltf = {
         asset: {

@@ -196,6 +196,10 @@ setIsLoading(false);
         }
     };
 
+    const handleResetComponentMaterial = (nodeId: string) => {
+        ViewerHost.getInstance().resetComponentMaterial(nodeId);
+    };
+
     const handleToggleVisibility = (nodeId: string) => {
         ViewerHost.getInstance().toggleComponentVisibility(nodeId);
     };
@@ -238,12 +242,13 @@ setIsLoading(false);
     const handleSaveConfig = async () => {
         setIsSaving(true);
         try {
+            const userAssignments = ViewerHost.getInstance().getUserMaterialAssignments();
             await fetch(`/api/v1/models/${activeModelId}/config`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     name: `${modelName} Configuration`,
-                    materialAssignments: {},
+                    materialAssignments: userAssignments,
                     studioPreferences: { studioPreset, groundShadows, groundReflections, envIntensity }
                 })
             });
@@ -418,6 +423,7 @@ setIsLoading(false);
                         onUpdateRole={handleUpdateRole}
                         onApplyGemstoneToSelected={handleApplyGemstoneToSelected}
                         onApplyMetalToSelected={handleApplyMetalToSelected}
+                        onResetComponentMaterial={handleResetComponentMaterial}
                         onClose={() => setIsInspectorOpen(false)}
                         studioPreset={studioPreset}
                         groundShadows={groundShadows}

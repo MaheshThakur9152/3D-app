@@ -206,7 +206,7 @@ export class DynamicCadLoader {
         // 6. Discover components and bind materials
         const resolvedManifest = ComponentDiscovery.discoverComponents(this.currentModelRoot, manifest);
         this.currentManifest = resolvedManifest;
-        this.roleBinder.bindComponents(this.currentModelRoot, resolvedManifest);
+        this.roleBinder.bindComponents(this.currentModelRoot, resolvedManifest, isBuiltin);
 
         // 7. Align Studio Ground to bottom of model
         this.alignGround();

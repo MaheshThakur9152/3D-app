@@ -148,6 +148,9 @@ export class MaterialRoleBinder {
 
     private componentMap: Map<string, { mesh: any; comp: ManifestComponent }> = new Map();
     private meshToNodeIdMap: Map<any, string> = new Map();
+    private baselineMaterials: Map<string, any> = new Map();
+    private userConfiguredComponents: Map<string, any> = new Map();
+    private isCurrentModelBuiltin = true;
 
     // Active Colors & Presets
     private currentShankColor: Color = new Color(0xffffff);
@@ -165,8 +168,9 @@ export class MaterialRoleBinder {
         this.viewer = viewer;
     }
 
-    public bindComponents(modelRoot: any, manifest: ModelManifest): void {
+    public bindComponents(modelRoot: any, manifest: ModelManifest, isBuiltin = true): void {
         this.clear();
+        this.isCurrentModelBuiltin = isBuiltin;
 
         for (const comp of manifest.components) {
             let mesh = this.viewer.scene.findObjectsByName(comp.nodeName)[0];
@@ -186,14 +190,73 @@ export class MaterialRoleBinder {
                 // Normalize texture encodings on mesh material to prevent undefined shader warnings
                 normalizeMaterialEncodings(mesh.material);
 
+                // Preserve baseline original material reference
+                if (!mesh.userData) mesh.userData = {};
+                if (!mesh.userData.originalMaterial && mesh.material) {
+                    mesh.userData.originalMaterial = typeof mesh.material.clone === 'function'
+                        ? mesh.material.clone()
+                        : mesh.material;
+                }
+                this.baselineMaterials.set(comp.nodeId, mesh.userData.originalMaterial || mesh.material);
+
                 this.componentMap.set(comp.nodeId, { mesh, comp });
                 this.meshToNodeIdMap.set(mesh, comp.nodeId);
-                this.assignMeshToRole(mesh, comp.role);
+
+                if (isBuiltin) {
+                    this.assignMeshToRole(mesh, comp.role);
+                } else {
+                    // Group mesh by role without forcing custom materials
+                    this.groupMeshByRole(mesh, comp.role);
+
+                    // Predictable neutral fallback ONLY if mesh has no usable material
+                    if (!mesh.material) {
+                        mesh.material = new MeshStandardMaterial2({
+                            color: new Color(0xcccccc),
+                            roughness: 0.5,
+                            metalness: 0.1
+                        });
+                        mesh.userData.originalMaterial = mesh.material;
+                    }
+                }
             }
         }
 
-        // Apply initial material settings
-        this.applyCurrentColors();
+        // Apply initial material settings only for built-in models
+        if (isBuiltin) {
+            this.applyCurrentColors();
+        } else {
+            // Restore saved user configurations if present
+            const saved = (manifest as any)?.savedMaterialAssignments;
+            if (saved && typeof saved === 'object') {
+                this.applySavedMaterialAssignments(saved);
+            }
+        }
+    }
+
+    public groupMeshByRole(mesh: any, role: ComponentRole): void {
+        this.removeFromLists(mesh);
+        switch (role) {
+            case 'metal_shank':
+                this.shankMeshes.push(mesh);
+                break;
+            case 'metal_head':
+                this.headMeshes.push(mesh);
+                break;
+            case 'metal_prongs':
+                this.prongMeshes.push(mesh);
+                break;
+            case 'diamond':
+            case 'colored_gemstone':
+                this.centerStoneMeshes.push(mesh);
+                break;
+            case 'accent_stone':
+                this.accentStoneMeshes.push(mesh);
+                break;
+            case 'unassigned':
+            default:
+                this.unassignedMeshes.push(mesh);
+                break;
+        }
     }
 
     public assignMeshToRole(mesh: any, role: ComponentRole): void {
@@ -663,6 +726,8 @@ export class MaterialRoleBinder {
         }
 
         this.applyDiamondMaterial(mesh, preset, diamondPlugin);
+        mesh.userData.__userConfigured = true;
+        this.userConfiguredComponents.set(nodeId, { type: 'gemstone', preset });
         this.invalidateRenderingHistory();
     }
 
@@ -740,7 +805,69 @@ export class MaterialRoleBinder {
             mat.roughness = roughness;
             mat.metalness = metalness;
         }
+        mesh.userData.__userConfigured = true;
+        this.userConfiguredComponents.set(nodeId, { type: 'metal', colorHex, roughness, metalness });
         this.invalidateRenderingHistory();
+    }
+
+    public resetComponentMaterial(nodeId: string): void {
+        let item = this.componentMap.get(nodeId);
+        if (!item) {
+            for (const [, val] of this.componentMap.entries()) {
+                if (val.comp.nodeName === nodeId || val.mesh?.name === nodeId) {
+                    item = val;
+                    break;
+                }
+            }
+        }
+        if (!item || !item.mesh) return;
+
+        const mesh = item.mesh;
+        if (mesh.userData?.originalMaterial) {
+            mesh.material = typeof mesh.userData.originalMaterial.clone === 'function'
+                ? mesh.userData.originalMaterial.clone()
+                : mesh.userData.originalMaterial;
+            mesh.userData.__userConfigured = false;
+            this.userConfiguredComponents.delete(nodeId);
+            this.invalidateRenderingHistory();
+        }
+    }
+
+    public resetAllMaterials(): void {
+        for (const [nodeId, item] of this.componentMap.entries()) {
+            if (item.mesh && item.mesh.userData?.originalMaterial) {
+                item.mesh.material = typeof item.mesh.userData.originalMaterial.clone === 'function'
+                    ? item.mesh.userData.originalMaterial.clone()
+                    : item.mesh.userData.originalMaterial;
+                item.mesh.userData.__userConfigured = false;
+            }
+        }
+        this.userConfiguredComponents.clear();
+        this.invalidateRenderingHistory();
+    }
+
+    public getUserMaterialAssignments(): Record<string, any> {
+        const result: Record<string, any> = {};
+        for (const [id, config] of this.userConfiguredComponents.entries()) {
+            result[id] = config;
+        }
+        return result;
+    }
+
+    public applySavedMaterialAssignments(assignments: Record<string, any>): void {
+        for (const [nodeId, config] of Object.entries(assignments)) {
+            if (!config) continue;
+            if (config.type === 'gemstone' && config.preset) {
+                this.applyGemstonePresetToComponent(nodeId, config.preset);
+            } else if (config.type === 'metal') {
+                this.applyMetalPresetToComponent(
+                    nodeId,
+                    config.colorHex || config.color || '#fed250',
+                    config.roughness ?? 0.08,
+                    config.metalness ?? 1.0
+                );
+            }
+        }
     }
 
     public clear(): void {
@@ -752,5 +879,7 @@ export class MaterialRoleBinder {
         this.unassignedMeshes.length = 0;
         this.componentMap.clear();
         this.meshToNodeIdMap.clear();
+        this.baselineMaterials.clear();
+        this.userConfiguredComponents.clear();
     }
 }
