@@ -100,6 +100,9 @@ function buildGLB(components, metadata = {}) {
                     WEBGI_materials_diamond: {
                         name: 'diamond',
                         type: 'DiamondMaterial',
+                        isDiamond: true,
+                        isDiamondMaterial: true,
+                        isDiamondMaterialParameters: true,
                         refractiveIndex: 2.417,
                         dispersion: 0.012,
                         reflectivity: 0.5,
@@ -134,9 +137,15 @@ function buildGLB(components, metadata = {}) {
             generator: '3D-Ring-Configurator-CAD-Converter v1.0',
             extras: metadata
         },
-        scenes: [{ nodes: gltfNodes.map((_, i) => i) }],
+        scenes: [{
+            name: 'Scene',
+            nodes: [gltfNodes.length]
+        }],
         scene: 0,
-        nodes: gltfNodes,
+        nodes: [...gltfNodes, {
+            name: metadata.originalFileName || metadata.modelId || 'ModelRoot',
+            children: gltfNodes.map((_, i) => i)
+        }],
         meshes: gltfMeshes,
         materials,
         accessors,

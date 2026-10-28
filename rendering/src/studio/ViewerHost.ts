@@ -20,17 +20,15 @@ import {
     TemporalAAPlugin,
     RandomizedDirectionalLightPlugin,
     Color,
-    AssetImporter,
-    BoxHelper,
     Box3,
     Sphere
 } from "webgi";
 
 import { ModelManifest, ComponentRole } from "../cad/ModelManifest";
-import { MaterialRoleBinder, GEMSTONE_PRESETS, GemstonePreset } from "../cad/MaterialRoleBinder";
+import { MaterialRoleBinder, GemstonePreset } from "../cad/MaterialRoleBinder";
 import { DynamicCadLoader } from "../cad/DynamicCadLoader";
 import { CanvasPicker } from "../cad/CanvasPicker";
-import { StudioSettings, STUDIO_PRESETS } from "../ui/StudioSettings";
+import { StudioSettings } from "../ui/StudioSettings";
 import { autoFrameCamera } from "../cad/CameraFraming";
 
 export class ViewerHost {
@@ -69,21 +67,26 @@ export class ViewerHost {
         const isMobile = mobileAndTabletCheck();
         viewer.renderer.displayCanvasScaling = Math.min(window.devicePixelRatio, 1);
 
+        // Normalize base renderer outputEncoding to linear default (3000) to prevent undefined encoding warnings
+        if (viewer.renderer && (viewer.renderer as any).rendererObject) {
+            (viewer.renderer as any).rendererObject.outputEncoding = (viewer.renderer as any).rendererObject.outputEncoding || 3000;
+        }
+
         const manager = await viewer.addPlugin(AssetManagerPlugin);
         this.manager = manager;
 
         const camera = viewer.scene.activeCamera;
 
-        // Preserved exact WebGi 8-pass rendering pipeline
+        // Preserved exact WebGi 8-pass rendering pipeline with clean neutral tonemapping
         await viewer.addPlugin(GBufferPlugin);
         await viewer.addPlugin(new ProgressivePlugin(32));
         await viewer.addPlugin(new TonemapPlugin(true, false,
             [
                 `vec4 vignette(vec4 color, vec2 uv, float offset, float darkness){
                     uv = ( uv - vec2( 0.5 ) ) * vec2( offset );
-                    return vec4( mix( color.rgb, vec3( 0.17, 0.00, 0.09 ), dot( uv, uv ) ), color.a );
+                    return vec4( mix( color.rgb, color.rgb * (1.0 - darkness * 0.12), dot( uv, uv ) ), color.a );
                 }`,
-                `gl_FragColor = vignette(gl_FragColor, vUv, 1.1, 0.8);`
+                `gl_FragColor = vignette(gl_FragColor, vUv, 1.0, 0.4);`
             ]
         ));
 
@@ -148,6 +151,7 @@ export class ViewerHost {
             const nodeId = ev.mesh.name || ev.nodeName;
             const manifest = this.dynamicLoader?.getCurrentManifest();
             const comp = manifest?.components.find(c => c.nodeId === nodeId || c.nodeName === nodeId);
+
             const compInfo = {
                 nodeId,
                 nodeName: ev.mesh.name || ev.nodeName || 'Unnamed Component',
@@ -190,26 +194,28 @@ export class ViewerHost {
     }
 
     public async loadModel(glbUrl: string, manifest?: ModelManifest | null, onProgress?: (p: number) => void): Promise<any> {
-        if (!this.dynamicLoader) return;
+        if (!this.dynamicLoader) return null;
         let root: any;
         try {
             root = await this.dynamicLoader.loadModel(glbUrl, manifest, onProgress);
         } catch (err) {
             console.error('[ViewerHost] Model load failed:', err);
-            return null;
+            return this.dynamicLoader.getCurrentModelRoot();
         }
 
         if (!root || typeof root.traverse !== 'function') {
-            console.warn('[ViewerHost] Loaded root is not a traversable Object3D, using scene modelRoot');
-            root = (this.viewer?.scene.modelRoot as any)?.modelObject || this.dynamicLoader.getCurrentModelRoot();
+            console.warn('[ViewerHost] Model load returned null or non-traversable root, retaining existing model');
+            return this.dynamicLoader.getCurrentModelRoot();
         }
 
         const isBuiltin = glbUrl.includes('ring_webgi') || glbUrl.includes('ring2_webgi');
         if (isBuiltin && root && root.rotation) {
             root.rotation.set(-Math.PI / 2, 0, -Math.PI / 2);
-            if (root.updateMatrixWorld) root.updateMatrixWorld(true);
-            this.dynamicLoader.alignGround();
         }
+        if (root && root.updateMatrixWorld) {
+            root.updateMatrixWorld(true);
+        }
+        this.dynamicLoader.alignGround();
 
         this.fitView(false);
         return root;
@@ -220,14 +226,17 @@ export class ViewerHost {
         const camera = this.viewer.scene.activeCamera;
         let radius = 1.35;
         const root = this.dynamicLoader?.getCurrentModelRoot();
-        if (root) {
+        if (root && typeof root.traverse === 'function') {
             if (root.updateMatrixWorld) root.updateMatrixWorld(true);
             const box = new Box3();
             let count = 0;
             root.traverse((child: any) => {
                 if (child.isMesh && child.visible) {
                     const name = (child.name || '').toLowerCase();
-                    if (!/ground|helper|grid|axis|shadow|gizmo|baker/i.test(name)) {
+                    const isHelper = /ground|helper|grid|axis|shadow|gizmo|baker/i.test(name) ||
+                        child.isGroundMesh || child.userData?.isGround;
+                    if (!isHelper) {
+                        if (child.geometry) child.geometry.computeBoundingBox();
                         box.expandByObject(child);
                         count++;
                     }
@@ -251,23 +260,16 @@ export class ViewerHost {
     }
 
     public resetView() {
-        if (!this.viewer) return;
-        const camera = this.viewer.scene.activeCamera;
-        camera.position.set(-0.08, -0.12, 4.18);
-        camera.target.set(0, 0, 0);
-        camera.positionUpdated(true);
-        camera.targetUpdated(true);
-        if (camera.controls) {
-            camera.controls.target.set(0, 0, 0);
-            camera.controls.update();
-        }
-        this.fitView(true);
+        if (!this.dynamicLoader) return;
+        this.dynamicLoader.resetView();
     }
 
     public setAutoRotate(enabled: boolean) {
-        if (this.viewer?.scene?.activeCamera?.controls) {
-            this.viewer.scene.activeCamera.controls.autoRotate = enabled;
-            this.viewer.scene.activeCamera.controls.update();
+        if (!this.viewer) return;
+        const camera = this.viewer.scene.activeCamera;
+        if (camera && camera.controls) {
+            camera.controls.autoRotate = enabled;
+            camera.controls.update();
         }
     }
 
@@ -278,8 +280,8 @@ export class ViewerHost {
             this.roleBinder.applyMetalPresetToComponent(mesh.name, colorHex, roughness, metalness);
             return;
         }
-        this.roleBinder.applyMetalColor(colorHex, (role as any) || 'all_metals');
-        this.roleBinder.applyMetalFinish(roughness, metalness, (role as any) || 'all_metals');
+        this.roleBinder.applyMetalColor(colorHex, role || 'all_metals');
+        this.roleBinder.applyMetalFinish(roughness, metalness, role || 'all_metals');
     }
 
     public setGemstonePreset(preset: GemstonePreset, role?: string) {
@@ -327,7 +329,7 @@ export class ViewerHost {
     public toggleComponentVisibility(nodeId: string): boolean {
         if (!this.viewer || !this.dynamicLoader) return true;
         const root = this.dynamicLoader.getCurrentModelRoot();
-        if (!root) return true;
+        if (!root || typeof root.traverse !== 'function') return true;
 
         let visible = true;
         root.traverse((child: any) => {
@@ -351,7 +353,7 @@ export class ViewerHost {
 
         const root = this.dynamicLoader.getCurrentModelRoot();
         let targetMesh: any = null;
-        if (root) {
+        if (root && typeof root.traverse === 'function') {
             root.traverse((child: any) => {
                 if ((child.name === nodeId || child.uuid === nodeId) && child.isMesh) {
                     targetMesh = child;
@@ -364,7 +366,7 @@ export class ViewerHost {
     public focusComponent(nodeId: string) {
         if (!this.viewer || !this.dynamicLoader) return;
         const root = this.dynamicLoader.getCurrentModelRoot();
-        if (!root) return;
+        if (!root || typeof root.traverse !== 'function') return;
 
         let targetMesh: any = null;
         root.traverse((child: any) => {

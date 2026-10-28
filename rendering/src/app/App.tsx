@@ -132,11 +132,18 @@ export const App: React.FC = () => {
         }
 
         const host = ViewerHost.getInstance();
-        await host.loadModel(glbUrl, targetManifest);
-        setManifest(targetManifest);
-        setSelectedNodeId(null);
-        setSelectedDetail(null);
-        setIsLoading(false);
+try {
+const root = await host.loadModel(glbUrl, targetManifest);
+if (root) {
+setManifest(targetManifest);
+setSelectedNodeId(null);
+setSelectedDetail(null);
+}
+} catch (err) {
+console.error("[App] Model switch failed:", err);
+} finally {
+setIsLoading(false);
+}
     };
 
     // Auto Rotate

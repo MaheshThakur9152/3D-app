@@ -16,8 +16,19 @@ export function autoFrameCamera(
     if (!camera) return;
 
     const radius = Math.max(0.5, boundingRadius || 1.35);
-    const aspect = camera.aspect || (window.innerWidth / window.innerHeight);
-    const fovY = (camera.fov || 45) * (Math.PI / 180);
+
+    // Measure actual central viewport dimensions from canvas
+    const canvas = camera._container || camera.cameraObject?.domElement || (typeof document !== 'undefined' && document.getElementById('webgi-canvas'));
+    let aspect = 1.6;
+    if (canvas && canvas.clientWidth > 0 && canvas.clientHeight > 0) {
+        aspect = canvas.clientWidth / canvas.clientHeight;
+    } else if (camera.aspect) {
+        aspect = camera.aspect;
+    } else if (typeof window !== 'undefined' && window.innerWidth > 0 && window.innerHeight > 0) {
+        aspect = window.innerWidth / window.innerHeight;
+    }
+
+    const fovY = ((camera.cameraObject?.fov || camera.fov || camera.getCameraOptions?.()?.fov || 45) * Math.PI) / 180;
     const fovX = 2 * Math.atan(Math.tan(fovY / 2) * Math.max(0.6, aspect));
     const effectiveFov = Math.min(fovY, fovX);
 
@@ -58,7 +69,7 @@ export function autoFrameCamera(
         x: targetX,
         y: targetY,
         z: targetZ,
-        duration: 1.0,
+        duration: 0.8,
         ease: "power2.inOut",
         onUpdate: () => {
             camera.positionUpdated(true);
@@ -77,7 +88,7 @@ export function autoFrameCamera(
         x: 0,
         y: 0,
         z: 0,
-        duration: 1.0,
+        duration: 0.8,
         ease: "power2.inOut"
     });
 }

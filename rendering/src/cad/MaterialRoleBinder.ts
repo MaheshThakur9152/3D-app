@@ -101,6 +101,40 @@ export const GEMSTONE_PRESETS: Record<string, GemstonePreset> = {
     }
 };
 
+/**
+ * Normalizes texture encodings according to standard color space rules:
+ * - Color maps (diffuse, emissive): sRGB (3001)
+ * - Data maps (normal, bump, roughness, metalness, ao, alpha): Linear (3000)
+ * Prevents "THREE.WebGLProgram: Unsupported encoding: undefined".
+ */
+export function normalizeMaterialEncodings(mat: any): void {
+    if (!mat) return;
+    if (Array.isArray(mat)) {
+        mat.forEach(normalizeMaterialEncodings);
+        return;
+    }
+
+    if (mat.map && mat.map.isTexture && (mat.map.encoding === undefined || isNaN(mat.map.encoding))) {
+        mat.map.encoding = 3001; // sRGBEncoding
+    }
+    if (mat.emissiveMap && mat.emissiveMap.isTexture && (mat.emissiveMap.encoding === undefined || isNaN(mat.emissiveMap.encoding))) {
+        mat.emissiveMap.encoding = 3001;
+    }
+
+    const linearMaps = [
+        'normalMap', 'bumpMap', 'roughnessMap', 'metalnessMap',
+        'aoMap', 'alphaMap', 'clearcoatMap', 'clearcoatNormalMap',
+        'clearcoatRoughnessMap', 'iridescenceMap', 'iridescenceThicknessMap',
+        'transmissionMap', 'thicknessMap', 'specularIntensityMap'
+    ];
+    for (const key of linearMaps) {
+        const tex = mat[key];
+        if (tex && tex.isTexture && (tex.encoding === undefined || isNaN(tex.encoding))) {
+            tex.encoding = 3000; // LinearEncoding
+        }
+    }
+}
+
 export class MaterialRoleBinder {
     private viewer: ViewerApp;
 
@@ -140,7 +174,7 @@ export class MaterialRoleBinder {
                 mesh = this.viewer.scene.findObjectsByName(comp.nodeId)[0];
             }
 
-            if (!mesh && modelRoot && modelRoot.traverse) {
+            if (!mesh && modelRoot && typeof modelRoot.traverse === 'function') {
                 modelRoot.traverse((child: any) => {
                     if (!mesh && (child.name === comp.nodeName || child.name === comp.nodeId)) {
                         mesh = child;
@@ -149,10 +183,8 @@ export class MaterialRoleBinder {
             }
 
             if (mesh) {
-                // Clone material to prevent unintentional cross-component sharing
-                if (mesh.material && typeof mesh.material.clone === 'function') {
-                    mesh.material = mesh.material.clone();
-                }
+                // Normalize texture encodings on mesh material to prevent undefined shader warnings
+                normalizeMaterialEncodings(mesh.material);
 
                 this.componentMap.set(comp.nodeId, { mesh, comp });
                 this.meshToNodeIdMap.set(mesh, comp.nodeId);
@@ -206,16 +238,24 @@ export class MaterialRoleBinder {
     }
 
     private applyMetalMaterial(mesh: any, color: Color): void {
-        if (!mesh.material || mesh.material.isDiamondMaterial) {
+        let mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+
+        // If no material or previously a diamond, create a compatible MeshStandardMaterial2
+        if (!mat || mat.isDiamondMaterial || mat.type === 'DiamondMaterial' || mat.isDiamond) {
             mesh.material = new MeshStandardMaterial2({
                 color: color,
                 roughness: this.currentMetalRoughness,
                 metalness: 1.0
             });
         } else {
-            mesh.material.color = color;
-            if (mesh.material.roughness !== undefined) mesh.material.roughness = this.currentMetalRoughness;
-            if (mesh.material.metalness !== undefined) mesh.material.metalness = 1.0;
+            // Preserve existing compatible WebGi metal material and update in-place
+            if (mat.color && typeof mat.color.copy === 'function') {
+                mat.color.copy(color);
+            } else if (mat.color) {
+                mat.color = color;
+            }
+            if (mat.roughness !== undefined) mat.roughness = this.currentMetalRoughness;
+            if (mat.metalness !== undefined) mat.metalness = 1.0;
         }
     }
 
@@ -223,18 +263,41 @@ export class MaterialRoleBinder {
         if (!diamondPlugin) return;
 
         const gemColor = new Color(preset.color);
+        let mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+        const isDiamond = mat && (mat.isDiamondMaterial || mat.type === 'DiamondMaterial' || mat.isDiamond);
 
-        if (mesh.material && mesh.material.isDiamondMaterial) {
-            // Update in-place without replacing shader or reallocating
-            mesh.material.color = gemColor;
-            mesh.material.refractiveIndex = preset.refractiveIndex;
-            mesh.material.dispersion = this.currentDiamondDispersion;
-            mesh.material.absorptionFactor = preset.absorptionFactor;
-            mesh.material.envMapIntensity = this.currentDiamondBrilliance;
+        if (isDiamond) {
+            // Update existing DiamondMaterial parameters in-place without rebuilding shader
+            if (mat.color && typeof mat.color.copy === 'function') {
+                mat.color.copy(gemColor);
+            } else if (mat.color) {
+                mat.color = gemColor;
+            }
+            mat.refractiveIndex = preset.refractiveIndex;
+            mat.dispersion = this.currentDiamondDispersion;
+            mat.absorptionFactor = preset.absorptionFactor;
+            mat.envMapIntensity = this.currentDiamondBrilliance;
+            if (mat.userData) {
+                mat.userData.isDiamond = true;
+                mat.userData.isDiamondMaterialParameters = true;
+            }
         } else if (typeof (diamondPlugin as any).makeDiamond === 'function') {
             try {
+                if (mat) {
+                    mat.isDiamond = true;
+                    mat.isDiamondMaterialParameters = true;
+                    if (!mat.userData) mat.userData = {};
+                    mat.userData.isDiamond = true;
+                    mat.userData.isDiamondMaterialParameters = true;
+                    if (!mat.userData.appliedMeshes) mat.userData.appliedMeshes = [mesh];
+                    else if (!mat.userData.appliedMeshes.includes(mesh)) mat.userData.appliedMeshes.push(mesh);
+                }
+
                 (diamondPlugin as any).prepareDiamondMesh(mesh, { cacheKey: mesh.uuid || mesh.name });
-                (diamondPlugin as any).makeDiamond(mesh.material, { cacheKey: mesh.uuid || mesh.name }, {
+                const diamondMat = (diamondPlugin as any).makeDiamond(mesh.material, { cacheKey: mesh.uuid || mesh.name }, {
+                    isDiamond: true,
+                    isDiamondMaterial: true,
+                    isDiamondMaterialParameters: true,
                     color: gemColor,
                     refractiveIndex: preset.refractiveIndex,
                     dispersion: preset.dispersion,
@@ -243,6 +306,10 @@ export class MaterialRoleBinder {
                     absorptionFactor: preset.absorptionFactor,
                     envMapIntensity: preset.envMapIntensity
                 });
+
+                if (diamondMat && mesh.material !== diamondMat) {
+                    mesh.material = (diamondMat as any).materialObject || diamondMat;
+                }
             } catch (err) {
                 console.warn(`[MaterialRoleBinder] Diamond shader binding failed for ${mesh.name}, fallback to refractive standard:`, err);
                 if (mesh.material) {
@@ -271,16 +338,32 @@ export class MaterialRoleBinder {
         this.currentProngColor = prongColor || headColor;
 
         for (const m of this.shankMeshes) {
-            if (m && m.material && !m.material.isDiamondMaterial) m.material.color = this.currentShankColor;
+            const mat = Array.isArray(m?.material) ? m.material[0] : m?.material;
+            if (mat && !mat.isDiamondMaterial && !mat.isDiamond) {
+                if (mat.color?.copy) mat.color.copy(this.currentShankColor);
+                else mat.color = this.currentShankColor;
+            }
         }
         for (const m of this.headMeshes) {
-            if (m && m.material && !m.material.isDiamondMaterial) m.material.color = this.currentHeadColor;
+            const mat = Array.isArray(m?.material) ? m.material[0] : m?.material;
+            if (mat && !mat.isDiamondMaterial && !mat.isDiamond) {
+                if (mat.color?.copy) mat.color.copy(this.currentHeadColor);
+                else mat.color = this.currentHeadColor;
+            }
         }
         for (const m of this.prongMeshes) {
-            if (m && m.material && !m.material.isDiamondMaterial) m.material.color = this.currentProngColor;
+            const mat = Array.isArray(m?.material) ? m.material[0] : m?.material;
+            if (mat && !mat.isDiamondMaterial && !mat.isDiamond) {
+                if (mat.color?.copy) mat.color.copy(this.currentProngColor);
+                else mat.color = this.currentProngColor;
+            }
         }
         for (const m of this.unassignedMeshes) {
-            if (m && m.material && !m.material.isDiamondMaterial) m.material.color = this.currentShankColor;
+            const mat = Array.isArray(m?.material) ? m.material[0] : m?.material;
+            if (mat && !mat.isDiamondMaterial && !mat.isDiamond) {
+                if (mat.color?.copy) mat.color.copy(this.currentShankColor);
+                else mat.color = this.currentShankColor;
+            }
         }
 
         this.invalidateRenderingHistory();
@@ -306,10 +389,8 @@ export class MaterialRoleBinder {
         this.invalidateRenderingHistory();
     }
 
-    // Backwards-compatible helper for simple hex or Color string
     public setGemColor(color: Color): void {
         const hex = '#' + color.getHexString();
-        // Match closest preset or generate dynamic diamond preset
         const matched = Object.values(GEMSTONE_PRESETS).find(p => p.color.toLowerCase() === hex.toLowerCase());
         const preset: GemstonePreset = matched || {
             id: 'custom',
@@ -390,9 +471,10 @@ export class MaterialRoleBinder {
         this.currentMetalRoughness = Math.max(0.01, Math.min(1.0, roughness));
         const metals = [...this.shankMeshes, ...this.headMeshes, ...this.prongMeshes, ...this.unassignedMeshes];
         for (const m of metals) {
-            if (m.material && !m.material.isDiamondMaterial) {
-                m.material.roughness = this.currentMetalRoughness;
-                if (m.material.metalness !== undefined) m.material.metalness = 1.0;
+            const mat = Array.isArray(m?.material) ? m.material[0] : m?.material;
+            if (mat && !mat.isDiamondMaterial && !mat.isDiamond) {
+                mat.roughness = this.currentMetalRoughness;
+                if (mat.metalness !== undefined) mat.metalness = 1.0;
             }
         }
         this.invalidateRenderingHistory();
@@ -411,8 +493,9 @@ export class MaterialRoleBinder {
         this.currentDiamondBrilliance = Math.max(0.2, Math.min(3.0, intensity));
         const gems = [...this.centerStoneMeshes, ...this.accentStoneMeshes];
         for (const g of gems) {
-            if (g.material) {
-                g.material.envMapIntensity = this.currentDiamondBrilliance;
+            const mat = Array.isArray(g?.material) ? g.material[0] : g?.material;
+            if (mat) {
+                mat.envMapIntensity = this.currentDiamondBrilliance;
             }
         }
         this.invalidateRenderingHistory();
@@ -422,8 +505,9 @@ export class MaterialRoleBinder {
         this.currentDiamondDispersion = Math.max(0.0, Math.min(0.1, dispersion));
         const gems = [...this.centerStoneMeshes, ...this.accentStoneMeshes];
         for (const g of gems) {
-            if (g.material) {
-                g.material.dispersion = this.currentDiamondDispersion;
+            const mat = Array.isArray(g?.material) ? g.material[0] : g?.material;
+            if (mat) {
+                mat.dispersion = this.currentDiamondDispersion;
             }
         }
         this.invalidateRenderingHistory();
@@ -446,23 +530,39 @@ export class MaterialRoleBinder {
         if (role === 'all_metals' || role === 'metal_shank') {
             this.currentShankColor = color;
             for (const m of this.shankMeshes) {
-                if (m.material && !m.material.isDiamondMaterial) m.material.color = color;
+                const mat = Array.isArray(m?.material) ? m.material[0] : m?.material;
+                if (mat && !mat.isDiamondMaterial && !mat.isDiamond) {
+                    if (mat.color?.copy) mat.color.copy(color);
+                    else mat.color = color;
+                }
             }
         }
         if (role === 'all_metals' || role === 'metal_head') {
             this.currentHeadColor = color;
             for (const m of this.headMeshes) {
-                if (m.material && !m.material.isDiamondMaterial) m.material.color = color;
+                const mat = Array.isArray(m?.material) ? m.material[0] : m?.material;
+                if (mat && !mat.isDiamondMaterial && !mat.isDiamond) {
+                    if (mat.color?.copy) mat.color.copy(color);
+                    else mat.color = color;
+                }
             }
         }
         if (role === 'all_metals' || role === 'metal_prongs') {
             this.currentProngColor = color;
             for (const m of this.prongMeshes) {
-                if (m.material && !m.material.isDiamondMaterial) m.material.color = color;
+                const mat = Array.isArray(m?.material) ? m.material[0] : m?.material;
+                if (mat && !mat.isDiamondMaterial && !mat.isDiamond) {
+                    if (mat.color?.copy) mat.color.copy(color);
+                    else mat.color = color;
+                }
             }
         }
         for (const m of this.unassignedMeshes) {
-            if (m.material && !m.material.isDiamondMaterial) m.material.color = this.currentShankColor;
+            const mat = Array.isArray(m?.material) ? m.material[0] : m?.material;
+            if (mat && !mat.isDiamondMaterial && !mat.isDiamond) {
+                if (mat.color?.copy) mat.color.copy(this.currentShankColor);
+                else mat.color = this.currentShankColor;
+            }
         }
         this.invalidateRenderingHistory();
     }
@@ -475,9 +575,10 @@ export class MaterialRoleBinder {
         else if (role === 'metal_prongs') targets = this.prongMeshes;
 
         for (const m of targets) {
-            if (m.material && !m.material.isDiamondMaterial) {
-                m.material.roughness = this.currentMetalRoughness;
-                if (m.material.metalness !== undefined) m.material.metalness = metalness;
+            const mat = Array.isArray(m?.material) ? m.material[0] : m?.material;
+            if (mat && !mat.isDiamondMaterial && !mat.isDiamond) {
+                mat.roughness = this.currentMetalRoughness;
+                if (mat.metalness !== undefined) mat.metalness = metalness;
             }
         }
         this.invalidateRenderingHistory();
@@ -516,15 +617,20 @@ export class MaterialRoleBinder {
         else if (role === 'accent_stone' || role === 'accent') targets = this.accentStoneMeshes;
 
         for (const m of targets) {
-            if (m.material) {
-                if (params.color) m.material.color = new Color(params.color);
-                if (params.refractiveIndex !== undefined) {
-                    m.material.refractiveIndex = params.refractiveIndex;
-                    if (m.material.ior !== undefined) m.material.ior = params.refractiveIndex;
+            const mat = Array.isArray(m?.material) ? m.material[0] : m?.material;
+            if (mat) {
+                if (params.color) {
+                    const c = new Color(params.color);
+                    if (mat.color?.copy) mat.color.copy(c);
+                    else mat.color = c;
                 }
-                if (params.dispersion !== undefined) m.material.dispersion = params.dispersion;
-                if (params.absorptionFactor !== undefined) m.material.absorptionFactor = params.absorptionFactor;
-                if (params.envMapIntensity !== undefined) m.material.envMapIntensity = params.envMapIntensity;
+                if (params.refractiveIndex !== undefined) {
+                    mat.refractiveIndex = params.refractiveIndex;
+                    if (mat.ior !== undefined) mat.ior = params.refractiveIndex;
+                }
+                if (params.dispersion !== undefined) mat.dispersion = params.dispersion;
+                if (params.absorptionFactor !== undefined) mat.absorptionFactor = params.absorptionFactor;
+                if (params.envMapIntensity !== undefined) mat.envMapIntensity = params.envMapIntensity;
             }
         }
         this.invalidateRenderingHistory();
@@ -533,7 +639,7 @@ export class MaterialRoleBinder {
     public applyGemstonePresetToComponent(nodeId: string, preset: GemstonePreset): void {
         let item = this.componentMap.get(nodeId);
         if (!item) {
-            for (const [id, val] of this.componentMap.entries()) {
+            for (const [, val] of this.componentMap.entries()) {
                 if (val.comp.nodeName === nodeId || val.mesh?.name === nodeId) {
                     item = val;
                     break;
@@ -546,8 +652,13 @@ export class MaterialRoleBinder {
         const diamondPlugin = this.viewer.getPlugin(DiamondPlugin);
 
         // Ensure mesh has its own unique cloned material instance so other stones are not modified
-        if (mesh.material && typeof mesh.material.clone === 'function' && !mesh.material.__uniqueInstance) {
-            mesh.material = mesh.material.clone();
+        let mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+        if (mat && typeof mat.clone === 'function' && !mat.__uniqueInstance) {
+            if (mat.userData) {
+                mat.userData.isDiamond = true;
+                mat.userData.isDiamondMaterialParameters = true;
+            }
+            mesh.material = mat.clone();
             mesh.material.__uniqueInstance = true;
         }
 
@@ -564,7 +675,7 @@ export class MaterialRoleBinder {
     }): void {
         let item = this.componentMap.get(nodeId);
         if (!item) {
-            for (const [id, val] of this.componentMap.entries()) {
+            for (const [, val] of this.componentMap.entries()) {
                 if (val.comp.nodeName === nodeId || val.mesh?.name === nodeId) {
                     item = val;
                     break;
@@ -574,19 +685,31 @@ export class MaterialRoleBinder {
         if (!item || !item.mesh) return;
 
         const mesh = item.mesh;
-        if (mesh.material && typeof mesh.material.clone === 'function' && !mesh.material.__uniqueInstance) {
-            mesh.material = mesh.material.clone();
+        let mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+        if (mat && typeof mat.clone === 'function' && !mat.__uniqueInstance) {
+            if (mat.userData) {
+                mat.userData.isDiamond = true;
+                mat.userData.isDiamondMaterialParameters = true;
+            }
+            mesh.material = mat.clone();
             mesh.material.__uniqueInstance = true;
+            mat = mesh.material;
         }
 
-        if (params.color) mesh.material.color = new Color(params.color);
-        if (params.refractiveIndex !== undefined) {
-            mesh.material.refractiveIndex = params.refractiveIndex;
-            if (mesh.material.ior !== undefined) mesh.material.ior = params.refractiveIndex;
+        if (mat) {
+            if (params.color) {
+                const c = new Color(params.color);
+                if (mat.color?.copy) mat.color.copy(c);
+                else mat.color = c;
+            }
+            if (params.refractiveIndex !== undefined) {
+                mat.refractiveIndex = params.refractiveIndex;
+                if (mat.ior !== undefined) mat.ior = params.refractiveIndex;
+            }
+            if (params.dispersion !== undefined) mat.dispersion = params.dispersion;
+            if (params.absorptionFactor !== undefined) mat.absorptionFactor = params.absorptionFactor;
+            if (params.envMapIntensity !== undefined) mat.envMapIntensity = params.envMapIntensity;
         }
-        if (params.dispersion !== undefined) mesh.material.dispersion = params.dispersion;
-        if (params.absorptionFactor !== undefined) mesh.material.absorptionFactor = params.absorptionFactor;
-        if (params.envMapIntensity !== undefined) mesh.material.envMapIntensity = params.envMapIntensity;
 
         this.invalidateRenderingHistory();
     }
@@ -594,7 +717,7 @@ export class MaterialRoleBinder {
     public applyMetalPresetToComponent(nodeId: string, colorHex: string, roughness: number, metalness = 1.0): void {
         let item = this.componentMap.get(nodeId);
         if (!item) {
-            for (const [id, val] of this.componentMap.entries()) {
+            for (const [, val] of this.componentMap.entries()) {
                 if (val.comp.nodeName === nodeId || val.mesh?.name === nodeId) {
                     item = val;
                     break;
@@ -604,15 +727,18 @@ export class MaterialRoleBinder {
         if (!item || !item.mesh) return;
 
         const mesh = item.mesh;
-        if (mesh.material && typeof mesh.material.clone === 'function' && !mesh.material.__uniqueInstance) {
-            mesh.material = mesh.material.clone();
+        let mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+        if (mat && typeof mat.clone === 'function' && !mat.__uniqueInstance) {
+            mesh.material = mat.clone();
             mesh.material.__uniqueInstance = true;
+            mat = mesh.material;
         }
 
         this.applyMetalMaterial(mesh, new Color(colorHex));
-        if (mesh.material) {
-            mesh.material.roughness = roughness;
-            mesh.material.metalness = metalness;
+        mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
+        if (mat) {
+            mat.roughness = roughness;
+            mat.metalness = metalness;
         }
         this.invalidateRenderingHistory();
     }

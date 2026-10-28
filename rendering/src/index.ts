@@ -88,9 +88,9 @@ async function setupViewer() {
         [
             `vec4 vignette(vec4 color, vec2 uv, float offset, float darkness){
                 uv = ( uv - vec2( 0.5 ) ) * vec2( offset );
-                return vec4( mix( color.rgb, vec3( 0.17, 0.00, 0.09 ), dot( uv, uv ) ), color.a );
+                return vec4( mix( color.rgb, color.rgb * 0.88, dot( uv, uv ) ), color.a );
             }`,
-            `gl_FragColor = vignette(gl_FragColor, vUv, 1.1, 0.8);`
+            `gl_FragColor = vignette(gl_FragColor, vUv, 1.0, 0.4);`
         ]
     ))
     const ssr = await viewer.addPlugin(SSRPlugin)
