@@ -171,6 +171,9 @@ export class ViewerHost {
         // ResizeObserver to update camera aspect without reinitializing WebGi
         this.resizeObserver = new ResizeObserver(() => {
             if (!this.viewer) return;
+            if (typeof (this.viewer as any).resize === 'function') {
+                (this.viewer as any).resize();
+            }
             const cam = this.viewer.scene.activeCamera;
             if (cam && this.canvas) {
                 const width = this.canvas.clientWidth;
@@ -262,6 +265,22 @@ export class ViewerHost {
     public resetView() {
         if (!this.dynamicLoader) return;
         this.dynamicLoader.resetView();
+    }
+
+    public takeSnapshot(filename = 'mahesh3d-jewelry.png'): void {
+        if (!this.canvas) return;
+        try {
+            this.viewer?.renderer?.reset();
+            const dataUrl = this.canvas.toDataURL('image/png');
+            const a = document.createElement('a');
+            a.download = filename;
+            a.href = dataUrl;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        } catch (e) {
+            console.error('[ViewerHost] Snapshot failed:', e);
+        }
     }
 
     public setAutoRotate(enabled: boolean) {

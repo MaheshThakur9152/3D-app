@@ -57,7 +57,7 @@ export const App: React.FC = () => {
     const [modelsList, setModelsList] = useState<ModelItem[]>([]);
 
     // Navigation and Panels
-    const [activeTab, setActiveTab] = useState<'models' | 'metals' | 'gemstones' | 'studio'>('metals');
+    const [activeTab, setActiveTab] = useState<'models' | 'metals' | 'gemstones'>('models');
     const [isLeftOpen, setIsLeftOpen] = useState(true);
     const [isInspectorOpen, setIsInspectorOpen] = useState(true);
 
@@ -153,9 +153,12 @@ setIsLoading(false);
         ViewerHost.getInstance().setAutoRotate(next);
     };
 
-    // Fit & Reset
+    // Fit & Reset & Snapshot
     const handleFitView = () => ViewerHost.getInstance().fitView(true);
     const handleResetView = () => ViewerHost.getInstance().resetView();
+    const handleSnapshot = () => {
+        ViewerHost.getInstance().takeSnapshot(`${modelName.replace(/\s+/g, '_')}_snapshot.png`);
+    };
 
     // Material controls
     const handleApplyMetal = (color: string, roughness: number, metalness: number, role: string) => {
@@ -296,14 +299,6 @@ setIsLoading(false);
                             <span className="tab-icon">💎</span>
                             <span className="tab-title">Gems</span>
                         </button>
-                        <button
-                            className={`dock-tab-btn ${activeTab === 'studio' ? 'active' : ''}`}
-                            onClick={() => { setActiveTab('studio'); setIsLeftOpen(true); }}
-                            title="Studio & Lighting"
-                        >
-                            <span className="tab-icon">💡</span>
-                            <span className="tab-title">Studio</span>
-                        </button>
                     </div>
 
                     {isLeftOpen && (
@@ -313,7 +308,6 @@ setIsLoading(false);
                                     {activeTab === 'models' && 'Model Library'}
                                     {activeTab === 'metals' && 'Metal Customizer'}
                                     {activeTab === 'gemstones' && 'Gemstone Optical Studio'}
-                                    {activeTab === 'studio' && 'Studio & Lighting'}
                                 </span>
                                 <button className="btn-collapse" onClick={() => setIsLeftOpen(false)}>&times;</button>
                             </div>
@@ -350,20 +344,6 @@ setIsLoading(false);
                                         onApplyCustomGemstone={handleApplyCustomGemstone}
                                     />
                                 )}
-
-                                {activeTab === 'studio' && (
-                                    <StudioPanel
-                                        currentPresetId={studioPreset}
-                                        groundVisible={true}
-                                        groundShadows={groundShadows}
-                                        groundReflections={groundReflections}
-                                        envIntensity={envIntensity}
-                                        onSelectPreset={handleSelectStudioPreset}
-                                        onToggleGroundShadows={handleToggleGroundShadows}
-                                        onToggleGroundReflections={handleToggleGroundReflections}
-                                        onChangeEnvIntensity={handleChangeEnvIntensity}
-                                    />
-                                )}
                             </div>
                         </div>
                     )}
@@ -375,24 +355,46 @@ setIsLoading(false);
 
                     {/* Viewport Floating Overlays */}
                     <div className="viewport-overlay-controls">
-                        <button className="btn-viewport-action" onClick={handleFitView} title="Fit View">
+                        <button
+                            className="btn-viewport-action"
+                            onClick={() => setIsLeftOpen(!isLeftOpen)}
+                            title={isLeftOpen ? 'Hide Left Library' : 'Open Left Library'}
+                        >
+                            <span>{isLeftOpen ? '◀ Library' : '▶ Library'}</span>
+                        </button>
+
+                        <div className="overlay-divider" />
+
+                        <button className="btn-viewport-action" onClick={handleFitView} title="Fit View (Center & Zoom)">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
                             </svg>
                             <span>Fit View</span>
                         </button>
-                        <button className="btn-viewport-action" onClick={handleResetView} title="Reset View">
+                        <button className="btn-viewport-action" onClick={handleResetView} title="Reset Camera View Angle">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                 <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
                                 <path d="M3 3v5h5"/>
                             </svg>
                             <span>Reset View</span>
                         </button>
-                        {!isInspectorOpen && (
-                            <button className="btn-viewport-action" onClick={() => setIsInspectorOpen(true)} title="Open Inspector">
-                                <span>Hierarchy</span>
-                            </button>
-                        )}
+                        <button className="btn-viewport-action" onClick={handleSnapshot} title="Capture Snapshot Image">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                                <circle cx="12" cy="13" r="4"/>
+                            </svg>
+                            <span>Snapshot</span>
+                        </button>
+
+                        <div className="overlay-divider" />
+
+                        <button
+                            className="btn-viewport-action"
+                            onClick={() => setIsInspectorOpen(!isInspectorOpen)}
+                            title={isInspectorOpen ? 'Hide Right Inspector' : 'Open Right Inspector'}
+                        >
+                            <span>{isInspectorOpen ? 'Inspector ▶' : '◀ Inspector'}</span>
+                        </button>
                     </div>
 
                     {isLoading && (
@@ -417,6 +419,18 @@ setIsLoading(false);
                         onApplyGemstoneToSelected={handleApplyGemstoneToSelected}
                         onApplyMetalToSelected={handleApplyMetalToSelected}
                         onClose={() => setIsInspectorOpen(false)}
+                        studioPreset={studioPreset}
+                        groundShadows={groundShadows}
+                        groundReflections={groundReflections}
+                        envIntensity={envIntensity}
+                        onSelectStudioPreset={handleSelectStudioPreset}
+                        onToggleGroundShadows={handleToggleGroundShadows}
+                        onToggleGroundReflections={handleToggleGroundReflections}
+                        onChangeEnvIntensity={handleChangeEnvIntensity}
+                        onFitView={handleFitView}
+                        onResetView={handleResetView}
+                        autoRotate={autoRotate}
+                        onToggleAutoRotate={handleToggleAutoRotate}
                     />
                 )}
             </div>
