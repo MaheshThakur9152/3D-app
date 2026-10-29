@@ -14,6 +14,7 @@ import {
     TonemapPlugin,
     SSAOPlugin,
     GroundPlugin,
+    ContactShadowGroundPlugin,
     FrameFadePlugin,
     DiamondPlugin,
     BloomPlugin,
@@ -80,20 +81,13 @@ export class ViewerHost {
         // Preserved exact WebGi 8-pass rendering pipeline with clean neutral tonemapping
         await viewer.addPlugin(GBufferPlugin);
         await viewer.addPlugin(new ProgressivePlugin(32));
-        await viewer.addPlugin(new TonemapPlugin(true, false,
-            [
-                `vec4 vignette(vec4 color, vec2 uv, float offset, float darkness){
-                    uv = ( uv - vec2( 0.5 ) ) * vec2( offset );
-                    return vec4( mix( color.rgb, color.rgb * (1.0 - darkness * 0.12), dot( uv, uv ) ), color.a );
-                }`,
-                `gl_FragColor = vignette(gl_FragColor, vUv, 1.0, 0.4);`
-            ]
-        ));
+        await viewer.addPlugin(new TonemapPlugin(true));
 
         const ssr = await viewer.addPlugin(SSRPlugin);
         const ssao = await viewer.addPlugin(SSAOPlugin);
         await viewer.addPlugin(FrameFadePlugin);
-        await viewer.addPlugin(GroundPlugin);
+        const ground = await viewer.addPlugin(ContactShadowGroundPlugin);
+        (viewer as any).plugins['GroundPlugin'] = ground;
         const bloom = await viewer.addPlugin(BloomPlugin);
         await viewer.addPlugin(TemporalAAPlugin);
         await viewer.addPlugin(DiamondPlugin);
@@ -224,7 +218,7 @@ export class ViewerHost {
         if (root && root.updateMatrixWorld) {
             root.updateMatrixWorld(true);
         }
-        this.dynamicLoader.alignGround();
+        this.studio?.configureGroundAppearance(); // ground transform already aligned by DynamicCadLoader.loadModel
 
         this.fitView(false);
         return root;
@@ -450,6 +444,18 @@ export class ViewerHost {
 
     public setGroundShadows(enabled: boolean) {
         this.studio?.setGroundShadows(enabled);
+    }
+
+    public setShadowIntensity(val: number) {
+        this.studio?.setShadowIntensity(val);
+    }
+
+    public setShadowSoftness(val: number) {
+        this.studio?.setShadowSoftness(val);
+    }
+
+    public setShadowQuality(quality: 'performance' | 'balanced' | 'high') {
+        this.studio?.setShadowQuality(quality);
     }
 
     public setGroundReflections(enabled: boolean) {

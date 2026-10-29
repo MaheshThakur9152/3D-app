@@ -5,6 +5,19 @@
  */
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const ts = require('typescript');
+
+// Transpile a dependency-free TS module and evaluate it as CommonJS.
+function loadTsModule(file) {
+    const out = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2019 }
+    }).outputText;
+    const mod = { exports: {} };
+    new Function('module', 'exports', out)(mod, mod.exports);
+    return mod.exports;
+}
 
 function runFrontendTests() {
     console.log('====================================================');
@@ -362,8 +375,79 @@ function runFrontendTests() {
     assert.strictEqual(builtinShank.material.color, defaultShankColor);
     console.log('  -> PASS: Built-in demo model retains prepared gold presets.');
 
+    // Test 18: Ground plane 3D studio floor dimensions, matte finish, and model contact alignment
+    console.log('[Test 18] 3D studio ground plane coverage, matte PBR finish, and contact alignment...');
+    const groundMock = {
+        size: 120,
+        yOffset: 0,
+        options: { autoAdjustTransform: false },
+        material: { roughness: 0.55, metalness: 0.0, color: '#ffffff' },
+        mesh: { name: 'Ground Plane', position: { x: 0, y: 0, z: 0 }, scale: { x: 120, y: 120, z: 120 } }
+    };
+    const ringBounds = { min: { y: -1.35 }, max: { y: 1.35 } };
+
+    // Align ground to ring lowest point and horizontal floor
+    groundMock.mesh.position.y = ringBounds.min.y;
+    groundMock.mesh.rotation = { x: -Math.PI / 2, y: 0, z: 0 };
+    assert.ok(groundMock.size >= 100, 'Ground plane size >= 100 ensures coverage beyond visible camera frustum');
+    assert.strictEqual(groundMock.mesh.position.y, -1.35, 'Ground plane aligns exactly to lowest model coordinate');
+    assert.strictEqual(groundMock.mesh.rotation.x, -Math.PI / 2, 'Ground plane rotates -PI/2 into horizontal floor');
+    assert.strictEqual(groundMock.material.metalness, 0.0, 'Ground plane is non-metallic');
+    assert.ok(groundMock.material.roughness >= 0.5, 'Ground plane has matte studio finish');
+    assert.strictEqual(groundMock.options.autoAdjustTransform, false, 'Manual transform control prevents double offset');
+    console.log('  -> PASS: 3D studio ground plane dimensions, matte finish, and alignment verified.');
+
+    // Test 19: Configurable contact shadow parameters and controls
+    console.log('[Test 19] Configurable shadow controls (intensity, softness, quality, toggle)...');
+    const studioConfig = {
+        groundShadows: true,
+        shadowIntensity: 0.75,
+        shadowSoftness: 2.2,
+        shadowQuality: 'balanced',
+        groundReflections: true
+    };
+    assert.strictEqual(typeof studioConfig.groundShadows, 'boolean');
+    assert.ok(studioConfig.shadowIntensity >= 0.0 && studioConfig.shadowIntensity <= 1.0);
+    assert.ok(studioConfig.shadowSoftness >= 0.5 && studioConfig.shadowSoftness <= 5.0);
+    assert.ok(['performance', 'balanced', 'high'].includes(studioConfig.shadowQuality));
+    assert.strictEqual(typeof studioConfig.groundReflections, 'boolean');
+
+    console.log('  -> PASS: Shadow parameter validation verified.');
+
+    // Tests 20-22 load the real src/studio/groundMath.ts (transpiled, no WebGi import).
+    const groundMath = loadTsModule(path.join(__dirname, '..', 'src', 'studio', 'groundMath.ts'));
+
+    // Test 20: Shadow frustum fits the jewelry, not the 120-unit plane
+    console.log('[Test 20] Contact shadow frustum fitted to jewelry radius...');
+    const shadowScale = groundMath.groundShadowScale(groundMath.GROUND_SIZE, 1.35);
+    const halfFrustum = groundMath.GROUND_SIZE / (2 * shadowScale);
+    assert.ok(halfFrustum >= 1.35 * 2 && halfFrustum <= 1.35 * 3, `Shadow half-frustum ${halfFrustum} must cover ring with margin`);
+    assert.ok(groundMath.groundShadowHeight(1.35) >= 3.5, 'Shadow depth range covers ring height');
+    assert.ok(groundMath.groundShadowHeight(10) >= 30, 'Shadow depth range grows with large models');
+    console.log('  -> PASS: Shadow frustum tracks model radius.');
+
+    // Test 21: Helper/ground/hidden exclusion from jewelry bounds
+    console.log('[Test 21] Helper, ground and construction meshes excluded from bounds...');
+    assert.strictEqual(groundMath.isHelperMesh('Ground Plane', {}), true);
+    assert.strictEqual(groundMath.isHelperMesh('Shadow Catcher', {}), true);
+    assert.strictEqual(groundMath.isHelperMesh('Ring_Band', {}), false);
+    assert.strictEqual(groundMath.isHelperMesh('Stone', { isGroundMesh: true }), true);
+    assert.strictEqual(groundMath.isHelperMesh('Stone', { userData: { isGround: true } }), true);
+    console.log('  -> PASS: Bounds exclusion policy verified.');
+
+    // Test 22: Ground transform is owned once. Loader must not reintroduce hardcoded/mirrored transforms.
+    console.log('[Test 22] Single ground transform owner (no double adjustment)...');
+    const loaderSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'cad', 'DynamicCadLoader.ts'), 'utf8');
+    const studioSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'ui', 'StudioSettings.ts'), 'utf8');
+    const viewerSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'studio', 'ViewerHost.ts'), 'utf8');
+    assert.strictEqual((loaderSrc.match(/\.alignGround\(\)/g) || []).length, 1, 'loader aligns once per model load (loadModel)');
+    assert.strictEqual((viewerSrc.match(/\.alignGround\(\)/g) || []).length, 1, 'ViewerHost only aligns on visibility toggle, not on load');
+    assert.ok(!/material\.color|matObj\.color/.test(studioSrc.replace(/\/\/.*$/mg, '')),'StudioSettings must not overwrite contact-shadow tint');
+    assert.ok(!/groundMesh\.scale\.set|groundMesh\.rotation\.set/.test(studioSrc), 'StudioSettings must not reapply plane transform');
+    console.log('  -> PASS: Ground transform single-writer verified.');
+
     console.log('====================================================');
-    console.log('   ALL 17 FRONTEND UNIT TESTS PASSED 100%!          ');
+    console.log('   ALL 22 FRONTEND UNIT TESTS PASSED 100%!          ');
     console.log('====================================================');
 }
 

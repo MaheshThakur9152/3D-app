@@ -41,10 +41,16 @@ interface InspectorPanelProps {
     // Studio & Camera controls
     studioPreset?: string;
     groundShadows?: boolean;
+    shadowIntensity?: number;
+    shadowSoftness?: number;
+    shadowQuality?: 'performance' | 'balanced' | 'high';
     groundReflections?: boolean;
     envIntensity?: number;
     onSelectStudioPreset?: (presetId: string) => void;
     onToggleGroundShadows?: (enabled: boolean) => void;
+    onChangeShadowIntensity?: (val: number) => void;
+    onChangeShadowSoftness?: (val: number) => void;
+    onChangeShadowQuality?: (quality: 'performance' | 'balanced' | 'high') => void;
     onToggleGroundReflections?: (enabled: boolean) => void;
     onChangeEnvIntensity?: (val: number) => void;
     onFitView?: () => void;
@@ -84,10 +90,16 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     onClose,
     studioPreset = 'white',
     groundShadows = true,
+    shadowIntensity = 0.75,
+    shadowSoftness = 2.2,
+    shadowQuality = 'balanced',
     groundReflections = true,
     envIntensity = 1.0,
     onSelectStudioPreset,
     onToggleGroundShadows,
+    onChangeShadowIntensity,
+    onChangeShadowSoftness,
+    onChangeShadowQuality,
     onToggleGroundReflections,
     onChangeEnvIntensity,
     onFitView,
@@ -400,6 +412,62 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                                 <span className="slider-round" />
                             </label>
                         </div>
+                    )}
+
+                    {groundShadows && (
+                        <>
+                            {onChangeShadowIntensity && (
+                                <div className="slider-row">
+                                    <div className="slider-header">
+                                        <span>Shadow Intensity</span>
+                                        <span className="slider-val">{Math.round(shadowIntensity * 100)}%</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="0.1"
+                                        max="1.0"
+                                        step="0.05"
+                                        value={shadowIntensity}
+                                        onChange={(e) => onChangeShadowIntensity(parseFloat(e.target.value))}
+                                    />
+                                </div>
+                            )}
+
+                            {onChangeShadowSoftness && (
+                                <div className="slider-row">
+                                    <div className="slider-header">
+                                        <span>Shadow Softness</span>
+                                        <span className="slider-val">{shadowSoftness.toFixed(1)}</span>
+                                    </div>
+                                    <input
+                                        type="range"
+                                        min="0.5"
+                                        max="5.0"
+                                        step="0.1"
+                                        value={shadowSoftness}
+                                        onChange={(e) => onChangeShadowSoftness(parseFloat(e.target.value))}
+                                    />
+                                </div>
+                            )}
+
+                            {onChangeShadowQuality && (
+                                <div className="quality-row">
+                                    <span className="quality-label">Shadow Quality</span>
+                                    <div className="quality-pill-group">
+                                        {(['performance', 'balanced', 'high'] as const).map((q) => (
+                                            <button
+                                                key={q}
+                                                type="button"
+                                                className={`btn-pill-opt ${shadowQuality === q ? 'active' : ''}`}
+                                                onClick={() => onChangeShadowQuality(q)}
+                                            >
+                                                {q.charAt(0).toUpperCase() + q.slice(1)}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </>
                     )}
 
                     {onToggleGroundReflections && (

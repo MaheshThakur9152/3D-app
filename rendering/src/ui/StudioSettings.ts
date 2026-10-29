@@ -4,7 +4,7 @@
  * reflections, environment lighting intensity and rotation with localStorage persistence.
  */
 
-import { ViewerApp, Color, GroundPlugin } from "webgi";
+import { ViewerApp, Color, GroundPlugin, ContactShadowGroundPlugin } from "webgi";
 
 export interface StudioPreset {
     id: string;
@@ -51,6 +51,9 @@ export interface StudioConfig {
     customColor?: string;
     groundVisible: boolean;
     groundShadows: boolean;
+    shadowIntensity: number; // 0.0 - 1.0 (shadow darkness / opacity)
+    shadowSoftness: number;  // 0.5 - 5.0 (contact blur radius)
+    shadowQuality: 'performance' | 'balanced' | 'high';
     groundReflections: boolean;
     envRotationDeg: number;
     envIntensity: number;
@@ -64,6 +67,9 @@ export class StudioSettings {
         presetId: 'white', // Default clean white catalog studio
         groundVisible: true,
         groundShadows: true,
+        shadowIntensity: 0.75,
+        shadowSoftness: 2.2,
+        shadowQuality: 'balanced',
         groundReflections: true,
         envRotationDeg: 0,
         envIntensity: 1.0
@@ -98,7 +104,7 @@ export class StudioSettings {
         this.config.presetId = preset.id;
         delete this.config.customColor;
         this.applyBackgroundColor(preset.hex);
-        this.configureGroundAppearance(preset.hex);
+        this.configureGroundAppearance();
         this.saveSettings();
     }
 
@@ -106,7 +112,7 @@ export class StudioSettings {
         this.config.presetId = 'custom';
         this.config.customColor = hex;
         this.applyBackgroundColor(hex);
-        this.configureGroundAppearance(hex);
+        this.configureGroundAppearance();
         this.saveSettings();
     }
 
@@ -117,71 +123,54 @@ export class StudioSettings {
         this.viewer.renderer.reset();
     }
 
-    public configureGroundAppearance(bgHex?: string): void {
-        const ground = this.viewer.getPlugin(GroundPlugin);
+    private getGround(): any {
+        return (this.viewer.getPlugin(ContactShadowGroundPlugin as any) || this.viewer.getPlugin(GroundPlugin)) as any;
+    }
+
+    public configureGroundAppearance(): void {
+        const ground = this.getGround();
         if (!ground) return;
 
-        const currentHex = bgHex || (this.config.customColor || STUDIO_PRESETS[this.config.presetId]?.hex || '#ffffff');
-        const groundColor = new Color(currentHex).convertSRGBToLinear();
+        // Owns appearance/options only. Transform is DynamicCadLoader.alignGround's job.
+        // autoAdjustTransform=false stops WebGi repositioning the plane onto scene bounds.
+        ground.setOptions({ autoAdjustTransform: false });
 
-        // Tune GroundPlugin MeshStandardMaterial2 for natural matte studio floor
-        if (ground.material) {
-            ground.material.color = groundColor;
-            ground.material.roughness = 0.45;
-            ground.material.metalness = 0.0;
-            ground.material.needsUpdate = true;
+        // Do not touch material.color: WebGi ContactShadowGroundPlugin uses its dark tint (0x111111)
+        // with the depth alphaMap as shadow. Overwriting it with the backdrop colour erases the shadow.
+        const groundMesh = ground._mesh || ground.mesh?.modelObject || ground.mesh;
+        const mat = ground.material || (groundMesh && groundMesh.material);
+        if (mat) {
+            const matObj = (mat as any).materialObject || mat;
+            matObj.roughness = this.config.groundReflections ? 0.25 : 1.0;
+            matObj.metalness = 0.0;
+            if (this.config.groundShadows) {
+                matObj.opacity = this.config.shadowIntensity;
+            } else {
+                matObj.opacity = 0.0;
+            }
+            if (matObj.userData) {
+                matObj.userData.ssreflDisabled = !this.config.groundReflections;
+                matObj.userData.ssreflNonPhysical = !this.config.groundReflections;
+            }
+            matObj.needsUpdate = true;
         }
 
         ground.tonemapGround = true;
-        ground.bakedShadows = this.config.groundShadows;
+        ground.visible = this.config.groundVisible;
+        ground.contactShadows = this.config.groundShadows;
         ground.groundReflection = this.config.groundReflections;
-
-        // Configure ShadowMapBaker for soft, realistic contact shadow
-        this.tuneShadowBaker(ground);
+        if ('blurAmount' in ground) {
+            ground.blurAmount = this.config.shadowSoftness;
+        }
 
         ground.refreshOptions();
         this.viewer.scene.setDirty();
         this.viewer.renderer.reset();
     }
 
-    public tuneShadowBaker(ground: GroundPlugin, boundingRadius = 1.35): void {
-        const baker = ground.shadowBaker;
-        if (!baker) return;
-
-        try {
-            baker.enabled = this.config.groundShadows;
-            baker.groundMapMode = 'alphaMap'; // Alpha blend over clean backdrop
-            baker.alphaVignette = true; // Radial soft penumbra falloff (no box edges)
-            baker.maxFrameNumber = 32; // Progressive accumulation
-            baker.shadowAutoUpdate = true;
-
-            const r = Math.max(0.5, boundingRadius);
-            const light = baker.light;
-            if (light && light.shadowParams) {
-                // Focus shadow frustum tightly on ring contact area (compact, non-diffuse)
-                light.shadowParams.frustumSize = Math.max(3.2, r * 2.4);
-                light.shadowParams.radius = 2.0; // Soft contact penumbra
-                light.shadowParams.bias = -0.0001; // Avoid shadow acne
-                light.shadowParams.normalBias = 0.001; // Prevent contact detachment
-                light.shadowParams.near = 0.5;
-                light.shadowParams.far = 15.0;
-                light.updateShadowParams();
-            }
-
-            if (light && light.randomParams) {
-                light.randomParams.focus = 0.85; // Directed downward contact light
-                light.randomParams.spread = 0.35; // Natural subtle softening
-            }
-
-            baker.reset();
-        } catch {
-            // Shadow baker configuration fallback
-        }
-    }
-
     public setGroundVisible(visible: boolean): void {
         this.config.groundVisible = visible;
-        const ground = this.viewer.getPlugin(GroundPlugin);
+        const ground = this.getGround();
         if (ground) {
             ground.visible = visible;
             ground.refreshOptions();
@@ -193,12 +182,15 @@ export class StudioSettings {
 
     public setGroundShadows(enabled: boolean): void {
         this.config.groundShadows = enabled;
-        const ground = this.viewer.getPlugin(GroundPlugin);
+        const ground = this.getGround();
         if (ground) {
-            ground.bakedShadows = enabled;
-            if (ground.shadowBaker) {
-                ground.shadowBaker.enabled = enabled;
-                ground.shadowBaker.reset();
+            ground.contactShadows = enabled;
+            const groundMesh = ground._mesh || ground.mesh?.modelObject || ground.mesh;
+            const mat = ground.material || (groundMesh && groundMesh.material);
+            if (mat) {
+                const matObj = (mat as any).materialObject || mat;
+                matObj.opacity = enabled ? this.config.shadowIntensity : 0.0;
+                matObj.needsUpdate = true;
             }
             ground.refreshOptions();
             this.viewer.scene.setDirty();
@@ -207,11 +199,61 @@ export class StudioSettings {
         this.saveSettings();
     }
 
+    public setShadowIntensity(val: number): void {
+        this.config.shadowIntensity = Math.max(0, Math.min(1, val));
+        const ground = this.getGround();
+        if (ground) {
+            const groundMesh = ground._mesh || ground.mesh?.modelObject || ground.mesh;
+            const mat = ground.material || (groundMesh && groundMesh.material);
+            if (mat) {
+                const matObj = (mat as any).materialObject || mat;
+                if (this.config.groundShadows) {
+                    matObj.opacity = this.config.shadowIntensity;
+                }
+                matObj.needsUpdate = true;
+            }
+            this.viewer.scene.setDirty();
+            this.viewer.renderer.reset();
+        }
+        this.saveSettings();
+    }
+
+    public setShadowSoftness(val: number): void {
+        this.config.shadowSoftness = Math.max(0.5, Math.min(8, val));
+        const ground = this.getGround();
+        if (ground) {
+            if ('blurAmount' in ground) {
+                ground.blurAmount = this.config.shadowSoftness;
+            }
+            ground.refreshOptions();
+            this.viewer.scene.setDirty();
+            this.viewer.renderer.reset();
+        }
+        this.saveSettings();
+    }
+
+    public setShadowQuality(quality: 'performance' | 'balanced' | 'high'): void {
+        // shortcut: no quality lever in WebGi 0.4.6 ContactShadowGroundPlugin (fixed 512px depth map); stored for UI only, drop control or add lever when WebGi exposes one.
+        this.config.shadowQuality = quality;
+        this.saveSettings();
+    }
+
     public setGroundReflections(enabled: boolean): void {
         this.config.groundReflections = enabled;
-        const ground = this.viewer.getPlugin(GroundPlugin);
+        const ground = this.getGround();
         if (ground) {
             ground.groundReflection = enabled;
+            const groundMesh = ground._mesh || ground.mesh?.modelObject || ground.mesh;
+            const mat = ground.material || (groundMesh && groundMesh.material);
+            if (mat) {
+                const matObj = (mat as any).materialObject || mat;
+                matObj.roughness = enabled ? 0.25 : 0.65;
+                if (matObj.userData) {
+                    matObj.userData.ssreflDisabled = !enabled;
+                    matObj.userData.ssreflNonPhysical = !enabled;
+                }
+                matObj.needsUpdate = true;
+            }
             ground.refreshOptions();
             this.viewer.scene.setDirty();
             this.viewer.renderer.reset();
@@ -235,6 +277,9 @@ export class StudioSettings {
         }
         this.setGroundVisible(this.config.groundVisible);
         this.setGroundShadows(this.config.groundShadows);
+        this.setShadowIntensity(this.config.shadowIntensity);
+        this.setShadowSoftness(this.config.shadowSoftness);
+        this.setShadowQuality(this.config.shadowQuality);
         this.setGroundReflections(this.config.groundReflections);
         this.setEnvironmentIntensity(this.config.envIntensity);
     }

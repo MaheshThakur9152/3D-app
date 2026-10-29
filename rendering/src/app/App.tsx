@@ -57,7 +57,7 @@ export const App: React.FC = () => {
     const [modelsList, setModelsList] = useState<ModelItem[]>([]);
 
     // Navigation and Panels
-    const [activeTab, setActiveTab] = useState<'models' | 'metals' | 'gemstones'>('models');
+    const [activeTab, setActiveTab] = useState<'models' | 'metals' | 'gemstones' | 'studio'>('models');
     const [isLeftOpen, setIsLeftOpen] = useState(true);
     const [isInspectorOpen, setIsInspectorOpen] = useState(true);
 
@@ -72,6 +72,9 @@ export const App: React.FC = () => {
     // Studio Settings
     const [studioPreset, setStudioPreset] = useState('white');
     const [groundShadows, setGroundShadows] = useState(true);
+    const [shadowIntensity, setShadowIntensity] = useState(0.75);
+    const [shadowSoftness, setShadowSoftness] = useState(2.2);
+    const [shadowQuality, setShadowQuality] = useState<'performance' | 'balanced' | 'high'>('balanced');
     const [groundReflections, setGroundReflections] = useState(true);
     const [envIntensity, setEnvIntensity] = useState(1.0);
 
@@ -228,6 +231,21 @@ setIsLoading(false);
         ViewerHost.getInstance().setGroundShadows(enabled);
     };
 
+    const handleChangeShadowIntensity = (val: number) => {
+        setShadowIntensity(val);
+        ViewerHost.getInstance().setShadowIntensity(val);
+    };
+
+    const handleChangeShadowSoftness = (val: number) => {
+        setShadowSoftness(val);
+        ViewerHost.getInstance().setShadowSoftness(val);
+    };
+
+    const handleChangeShadowQuality = (quality: 'performance' | 'balanced' | 'high') => {
+        setShadowQuality(quality);
+        ViewerHost.getInstance().setShadowQuality(quality);
+    };
+
     const handleToggleGroundReflections = (enabled: boolean) => {
         setGroundReflections(enabled);
         ViewerHost.getInstance().setGroundReflections(enabled);
@@ -249,7 +267,15 @@ setIsLoading(false);
                 body: JSON.stringify({
                     name: `${modelName} Configuration`,
                     materialAssignments: userAssignments,
-                    studioPreferences: { studioPreset, groundShadows, groundReflections, envIntensity }
+                    studioPreferences: {
+                        studioPreset,
+                        groundShadows,
+                        shadowIntensity,
+                        shadowSoftness,
+                        shadowQuality,
+                        groundReflections,
+                        envIntensity
+                    }
                 })
             });
             alert('Studio configuration saved successfully!');
@@ -304,6 +330,14 @@ setIsLoading(false);
                             <span className="tab-icon">💎</span>
                             <span className="tab-title">Gems</span>
                         </button>
+                        <button
+                            className={`dock-tab-btn ${activeTab === 'studio' ? 'active' : ''}`}
+                            onClick={() => { setActiveTab('studio'); setIsLeftOpen(true); }}
+                            title="Studio Floor & Contact Shadows"
+                        >
+                            <span className="tab-icon">✨</span>
+                            <span className="tab-title">Studio</span>
+                        </button>
                     </div>
 
                     {isLeftOpen && (
@@ -313,6 +347,7 @@ setIsLoading(false);
                                     {activeTab === 'models' && 'Model Library'}
                                     {activeTab === 'metals' && 'Metal Customizer'}
                                     {activeTab === 'gemstones' && 'Gemstone Optical Studio'}
+                                    {activeTab === 'studio' && 'Studio & Contact Shadows'}
                                 </span>
                                 <button className="btn-collapse" onClick={() => setIsLeftOpen(false)}>&times;</button>
                             </div>
@@ -347,6 +382,25 @@ setIsLoading(false);
                                         onApplyMetal={handleApplyMetal}
                                         onApplyGemstonePreset={handleApplyGemstonePreset}
                                         onApplyCustomGemstone={handleApplyCustomGemstone}
+                                    />
+                                )}
+
+                                {activeTab === 'studio' && (
+                                    <StudioPanel
+                                        currentPresetId={studioPreset}
+                                        groundShadows={groundShadows}
+                                        shadowIntensity={shadowIntensity}
+                                        shadowSoftness={shadowSoftness}
+                                        shadowQuality={shadowQuality}
+                                        groundReflections={groundReflections}
+                                        envIntensity={envIntensity}
+                                        onSelectPreset={handleSelectStudioPreset}
+                                        onToggleGroundShadows={handleToggleGroundShadows}
+                                        onChangeShadowIntensity={handleChangeShadowIntensity}
+                                        onChangeShadowSoftness={handleChangeShadowSoftness}
+                                        onChangeShadowQuality={handleChangeShadowQuality}
+                                        onToggleGroundReflections={handleToggleGroundReflections}
+                                        onChangeEnvIntensity={handleChangeEnvIntensity}
                                     />
                                 )}
                             </div>
@@ -427,10 +481,16 @@ setIsLoading(false);
                         onClose={() => setIsInspectorOpen(false)}
                         studioPreset={studioPreset}
                         groundShadows={groundShadows}
+                        shadowIntensity={shadowIntensity}
+                        shadowSoftness={shadowSoftness}
+                        shadowQuality={shadowQuality}
                         groundReflections={groundReflections}
                         envIntensity={envIntensity}
                         onSelectStudioPreset={handleSelectStudioPreset}
                         onToggleGroundShadows={handleToggleGroundShadows}
+                        onChangeShadowIntensity={handleChangeShadowIntensity}
+                        onChangeShadowSoftness={handleChangeShadowSoftness}
+                        onChangeShadowQuality={handleChangeShadowQuality}
                         onToggleGroundReflections={handleToggleGroundReflections}
                         onChangeEnvIntensity={handleChangeEnvIntensity}
                         onFitView={handleFitView}

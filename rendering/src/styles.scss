@@ -3457,6 +3457,50 @@ body.night-mode {
     }
 }
 
+.quality-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid #f4f4f7;
+
+    .quality-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: #444444;
+    }
+
+    .quality-pill-group {
+        display: flex;
+        gap: 4px;
+        background: #f0f0f4;
+        padding: 3px;
+        border-radius: 6px;
+
+        .btn-pill-opt {
+            border: none;
+            background: transparent;
+            font-size: 11px;
+            font-weight: 600;
+            color: #666666;
+            padding: 3px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+
+            &.active {
+                background: #ffffff;
+                color: #111111;
+                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            }
+
+            &:hover:not(.active) {
+                color: #222222;
+            }
+        }
+    }
+}
+
 .demo-rings-grid {
     display: flex;
     flex-direction: column;

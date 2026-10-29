@@ -54,7 +54,7 @@ async function testConnection() {
 }
 
 function hasDb() {
-    return isConnected;
+    return isConnected || !!getPool();
 }
 
 module.exports = {

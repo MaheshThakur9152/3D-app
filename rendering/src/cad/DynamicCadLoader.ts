@@ -4,11 +4,12 @@
  * handling resource disposal, temporal accumulation reset, and camera auto-framing.
  */
 
-import { ViewerApp, AssetManagerPlugin, Box3, Sphere, ProgressivePlugin, GroundPlugin, Group } from "webgi";
+import { ViewerApp, AssetManagerPlugin, Box3, Sphere, ProgressivePlugin, GroundPlugin, ContactShadowGroundPlugin, Group } from "webgi";
 import { ModelManifest } from "./ModelManifest";
 import { MaterialRoleBinder } from "./MaterialRoleBinder";
 import { ComponentDiscovery } from "./ComponentDiscovery";
 import { autoFrameCamera } from "./CameraFraming";
+import { GROUND_SIZE, groundShadowHeight, groundShadowScale, isHelperMesh } from "../studio/groundMath";
 
 /**
  * Normalization helper resolving the real Three.js Object3D root from
@@ -149,11 +150,8 @@ export class DynamicCadLoader {
             let count = 0;
             if (this.currentModelRoot && typeof this.currentModelRoot.traverse === 'function') {
                 this.currentModelRoot.traverse((child: any) => {
-                    if (child.isMesh && child.visible) {
-                        const name = (child.name || '').toLowerCase();
-                        const isHelper = /ground|helper|grid|axis|shadow|gizmo|baker/i.test(name) ||
-                            child.isGroundMesh || child.userData?.isGround;
-                        if (!isHelper && child.geometry) {
+                    if (child.isMesh && child.visible && !isHelperMesh(child.name, child)) {
+                        if (child.geometry) {
                             child.geometry.computeBoundingBox();
                             box.expandByObject(child);
                             count++;
@@ -306,8 +304,13 @@ export class DynamicCadLoader {
         return this.currentModelRoot;
     }
 
+    /**
+     * Sole writer of ground transform + shadow frustum. Called after every model load/visibility change.
+     * Plane sits at lowest visible point, centred under the jewelry in XZ so the contact shadow follows it.
+     * Requires autoAdjustTransform=false (set by StudioSettings), else WebGi repositions the plane itself.
+     */
     public alignGround(): void {
-        const ground = this.viewer.getPlugin(GroundPlugin);
+        const ground = (this.viewer.getPlugin(ContactShadowGroundPlugin as any) || this.viewer.getPlugin(GroundPlugin)) as any;
         if (!ground || !this.currentModelRoot) return;
 
         try {
@@ -319,15 +322,10 @@ export class DynamicCadLoader {
             let count = 0;
             if (typeof this.currentModelRoot.traverse === 'function') {
                 this.currentModelRoot.traverse((child: any) => {
-                    if (child.isMesh && child.visible) {
-                        const name = (child.name || '').toLowerCase();
-                        const isHelper = /ground|helper|grid|axis|shadow|gizmo|baker/i.test(name) ||
-                            child.isGroundMesh || child.userData?.isGround;
-                        if (!isHelper) {
-                            if (child.geometry) child.geometry.computeBoundingBox();
-                            box.expandByObject(child);
-                            count++;
-                        }
+                    if (child.isMesh && child.visible && !isHelperMesh(child.name, child)) {
+                        if (child.geometry) child.geometry.computeBoundingBox();
+                        box.expandByObject(child);
+                        count++;
                     }
                 });
             }
@@ -336,24 +334,22 @@ export class DynamicCadLoader {
             }
 
             if (box.min.y !== Infinity && !isNaN(box.min.y)) {
-                ground.yOffset = box.min.y;
-                if ((ground as any).mesh && (ground as any).mesh.position) {
-                    (ground as any).mesh.position.y = box.min.y;
+                const sphere = box.getBoundingSphere(new Sphere());
+                const r = Math.max(sphere.radius || 1.35, 0.5);
+
+                ground.size = GROUND_SIZE;
+                ground.shadowScale = groundShadowScale(GROUND_SIZE, r);
+                ground.shadowHeight = groundShadowHeight(r);
+
+                const groundMesh = ground._mesh || ground.mesh?.modelObject;
+                if (groundMesh) {
+                    groundMesh.position.set(sphere.center.x, box.min.y, sphere.center.z);
+                    groundMesh.rotation.set(-Math.PI / 2, 0, 0);
+                    groundMesh.scale.set(GROUND_SIZE, -GROUND_SIZE, GROUND_SIZE);
+                    groundMesh.updateMatrixWorld?.(true);
                 }
+
                 ground.refreshOptions();
-
-                // Soft, realistic contact shadow directly beneath contact point
-                if (ground.shadowBaker) {
-                    const sphere = box.getBoundingSphere(new Sphere());
-                    const r = Math.max(sphere.radius, 0.5);
-                    if (ground.shadowBaker.light?.shadowParams) {
-                        ground.shadowBaker.light.shadowParams.frustumSize = Math.max(3.2, r * 2.4);
-                        ground.shadowBaker.light.shadowParams.radius = 2.0;
-                        ground.shadowBaker.light.updateShadowParams();
-                    }
-                    ground.shadowBaker.reset();
-                }
-
                 this.viewer.scene.setDirty();
                 this.viewer.renderer.reset();
             }
