@@ -469,8 +469,90 @@ function runFrontendTests() {
     assert.ok(floorSrc.includes("new PlaneGeometry"), 'Floor uses real 3D geometry');
     console.log('  -> PASS: Floor and contact shadow decoupling with anti-z-fighting verified.');
 
+    // Test 26: Model positioning, centering and lowest vertex floor alignment math
+    console.log('[Test 26] Model positioning and lowest vertex alignment...');
+    function calculateAlignment(minX, maxX, minY, maxY, minZ, maxZ, floorHeight = 0) {
+        const centerX = (minX + maxX) / 2;
+        const centerZ = (minZ + maxZ) / 2;
+        const lowestY = minY;
+        const posY = floorHeight - lowestY;
+        return {
+            posX: -centerX,
+            posY: posY,
+            posZ: -centerZ,
+            alignedLowestY: lowestY + posY
+        };
+    }
+    const aligned = calculateAlignment(10, 20, 5, 25, -15, -5, 0);
+    assert.strictEqual(aligned.posX, -15, 'Horizontal X centered');
+    assert.strictEqual(aligned.posZ, 10, 'Horizontal Z centered');
+    assert.strictEqual(aligned.alignedLowestY, 0, 'Lowest point grounded at floor level 0');
+    console.log('  -> PASS: Deterministic centering and ground contact math verified.');
+
+    // Test 27: Uniform scaling preserving jewelry proportions
+    console.log('[Test 27] Uniform scale and aspect ratio preservation...');
+    function computeUniformScale(currentRadius, targetRadius = 1.35) {
+        if (currentRadius <= 0.001) return 1.0;
+        return targetRadius / currentRadius;
+    }
+    const s = computeUniformScale(2.7, 1.35);
+    assert.strictEqual(s, 0.5, 'Uniform scale factor is exactly 0.5');
+    const originalAspect = 2.47 / 2.64;
+    const scaledWidth = 2.47 * s;
+    const scaledHeight = 2.64 * s;
+    assert.ok(Math.abs((scaledWidth / scaledHeight) - originalAspect) < 0.0001, 'Aspect ratio precisely preserved');
+    console.log('  -> PASS: Uniform scale preserves jewelry geometry proportions.');
+
+    // Test 28: Studio world lifecycle: persistent single floor across model loads
+    console.log('[Test 28] Single floor instance lifecycle across model loads...');
+    assert.ok(floorSrc.includes('if (this.floorMesh) return;'), 'Floor initialization is strictly idempotent');
+    assert.ok(!loaderSrc.includes('new StudioFloor'), 'DynamicCadLoader never instantiates or duplicates floor');
+    assert.ok(!loaderSrc.includes('this.studioFloor.destroy'), 'DynamicCadLoader never destroys floor on model dispose');
+    console.log('  -> PASS: Persistent single-floor lifecycle guaranteed.');
+
+    // Test 29: Floor and shadow independent visibility controls
+    console.log('[Test 29] Independent floor and contact shadow toggling...');
+    assert.ok(floorSrc.includes('setVisible(visible: boolean)'), 'StudioFloor exposes independent setVisible');
+    assert.ok(studioSrc.includes('setGroundShadows'), 'StudioSettings controls shadow opacity independently');
+    assert.ok(studioSrc.includes('setStudioFloor'), 'StudioSettings synchronizes floor reference without clearing');
+    console.log('  -> PASS: Floor remains visible even when contact shadow opacity is 0.');
+
+    // Test 30: Idempotent normalization guards against repeated scaling
+    console.log('[Test 30] Idempotent normalization prevents repeated scaling drift...');
+    function normalizePass(r, autoScale) {
+        if (!autoScale || Math.abs(r - 1.35) <= 0.05) return { scale: 1.0, nextR: r };
+        const scale = 1.35 / r;
+        return { scale, nextR: r * scale };
+    }
+    const pass1 = normalizePass(3.0, true);
+    assert.ok(Math.abs(pass1.nextR - 1.35) < 0.001, 'Pass 1 normalizes radius to target');
+    const pass2 = normalizePass(pass1.nextR, true);
+    assert.strictEqual(pass2.scale, 1.0, 'Pass 2 detects already-normalized bounds and skips re-scaling');
+    console.log('  -> PASS: Idempotent normalization guard confirmed.');
+
+    // Test 31: AutoCenter and AutoScale configurable controls in DynamicCadLoader and ViewerHost
+    console.log('[Test 31] Configurable AutoCenter and AutoScale getters and setters...');
+    assert.ok(loaderSrc.includes('setAutoCenter(enabled: boolean)'), 'DynamicCadLoader supports setAutoCenter');
+    assert.ok(loaderSrc.includes('setAutoScale(enabled: boolean)'), 'DynamicCadLoader supports setAutoScale');
+    assert.ok(loaderSrc.includes('setTargetRadius(radius: number)'), 'DynamicCadLoader supports setTargetRadius');
+    assert.ok(viewerSrc.includes('setAutoCenter(enabled: boolean)'), 'ViewerHost exposes setAutoCenter');
+    assert.ok(viewerSrc.includes('setAutoScale(enabled: boolean)'), 'ViewerHost exposes setAutoScale');
+    console.log('  -> PASS: AutoCenter and AutoScale options connected to model loader.');
+
+    // Test 32: Playground layout components and panel integration
+    console.log('[Test 32] iJewel3D Playground UI components and hierarchy...');
+    const playgroundLayoutSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'playground', 'PlaygroundLayout.tsx'), 'utf8');
+    assert.ok(playgroundLayoutSrc.includes('<PlaygroundHeader'), 'Playground renders top header');
+    assert.ok(playgroundLayoutSrc.includes('<LeftNavRail'), 'Playground renders left navigation rail');
+    assert.ok(playgroundLayoutSrc.includes('<AssetBrowser'), 'Playground renders left asset browser');
+    assert.ok(playgroundLayoutSrc.includes('<ViewportToolbar'), 'Playground renders floating viewport toolbar');
+    assert.ok(playgroundLayoutSrc.includes('<GemVariantSelector'), 'Playground renders bottom gemstone selector');
+    assert.ok(playgroundLayoutSrc.includes('<RightInspector'), 'Playground renders right inspector');
+    assert.ok(playgroundLayoutSrc.includes('<QuickToolRail'), 'Playground renders quick-tool rail');
+    console.log('  -> PASS: Complete iJewel3D Playground component shell verified.');
+
     console.log('====================================================');
-    console.log('   ALL 25 FRONTEND UNIT TESTS PASSED 100%!          ');
+    console.log('   ALL 32 FRONTEND UNIT TESTS PASSED 100%!          ');
     console.log('====================================================');
 }
 

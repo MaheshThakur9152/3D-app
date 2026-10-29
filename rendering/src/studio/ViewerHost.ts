@@ -478,4 +478,134 @@ export class ViewerHost {
     public setEnvironmentIntensity(val: number) {
         this.studio?.setEnvironmentIntensity(val);
     }
+
+    public setFloorColor(hex: string) {
+        this.studioFloor?.setColor(hex);
+    }
+
+    public setFloorRoughness(roughness: number) {
+        this.studioFloor?.setRoughness(roughness);
+    }
+
+    public setFloorSize(size: number) {
+        this.studioFloor?.setSize(size);
+    }
+
+    public setFloorVisible(visible: boolean) {
+        this.studioFloor?.setVisible(visible);
+    }
+
+    public setDisplayCanvasScaling(scale: number) {
+        if (!this.viewer) return;
+        this.viewer.renderer.displayCanvasScaling = Math.max(0.5, Math.min(3.0, scale));
+        this.viewer.renderer.reset();
+    }
+
+    public setBloom(enabled: boolean) {
+        if (!this.viewer) return;
+        const bloom = this.viewer.getPlugin(BloomPlugin);
+        if (bloom) {
+            bloom.enabled = enabled;
+            this.viewer.renderer.reset();
+        }
+    }
+
+    public setSSAO(enabled: boolean) {
+        if (!this.viewer) return;
+        const ssao = this.viewer.getPlugin(SSAOPlugin);
+        if (ssao) {
+            ssao.enabled = enabled;
+            this.viewer.renderer.reset();
+        }
+    }
+
+    public setSSR(enabled: boolean) {
+        if (!this.viewer) return;
+        const ssr = this.viewer.getPlugin(SSRPlugin);
+        if (ssr) {
+            ssr.enabled = enabled;
+            this.viewer.renderer.reset();
+        }
+    }
+
+    public setCameraFov(fov: number) {
+        if (!this.viewer) return;
+        const cam = this.viewer.scene.activeCamera;
+        if (cam) {
+            cam.setCameraOptions({ fov: Math.max(20, Math.min(90, fov)) });
+            cam.positionUpdated(true);
+            cam.targetUpdated(true);
+            if (cam.controls) cam.controls.update();
+            this.viewer.renderer.reset();
+        }
+    }
+
+    public setAutoRotateSpeed(speed: number) {
+        if (!this.viewer) return;
+        const cam = this.viewer.scene.activeCamera;
+        if (cam && cam.controls) {
+            cam.controls.autoRotateSpeed = speed;
+            cam.controls.update();
+        }
+    }
+
+    public setAutoCenter(enabled: boolean) {
+        this.dynamicLoader?.setAutoCenter(enabled);
+    }
+
+    public getAutoCenter(): boolean {
+        return this.dynamicLoader?.getAutoCenter() ?? true;
+    }
+
+    public setAutoScale(enabled: boolean) {
+        this.dynamicLoader?.setAutoScale(enabled);
+    }
+
+    public getAutoScale(): boolean {
+        return this.dynamicLoader?.getAutoScale() ?? true;
+    }
+
+    public setAutoScaleRadius(radius: number) {
+        this.dynamicLoader?.setTargetRadius(radius);
+    }
+
+    public getAutoScaleRadius(): number {
+        return this.dynamicLoader?.getTargetRadius() ?? 1.35;
+    }
+
+    public applyMetalToAll(colorHex: string, roughness: number, metalness = 1.0) {
+        if (!this.roleBinder) return;
+        this.roleBinder.applyMetalColor(colorHex, 'all_metals');
+        this.roleBinder.applyMetalFinish(roughness, metalness, 'all_metals');
+        this.viewer?.renderer.reset();
+    }
+
+    public applyGemstoneToAll(preset: GemstonePreset) {
+        if (!this.roleBinder) return;
+        this.roleBinder.applyGemstonePreset(preset, 'all_gemstones');
+        this.viewer?.renderer.reset();
+    }
+
+    public getAllNodes(): Array<{ nodeId: string; nodeName: string; visible: boolean; role: string; sourceLayer?: string }> {
+        const result: Array<{ nodeId: string; nodeName: string; visible: boolean; role: string; sourceLayer?: string }> = [];
+        const root = this.dynamicLoader?.getCurrentModelRoot();
+        const manifest = this.dynamicLoader?.getCurrentManifest();
+
+        if (root && typeof root.traverse === 'function') {
+            root.traverse((child: any) => {
+                if (child.isMesh) {
+                    const id = child.name || child.uuid;
+                    const comp = manifest?.components.find(c => c.nodeId === id || c.nodeName === id);
+                    result.push({
+                        nodeId: id,
+                        nodeName: child.name || 'Unnamed Component',
+                        visible: child.visible !== false,
+                        role: comp ? comp.role : 'unassigned',
+                        sourceLayer: comp?.sourceLayer
+                    });
+                }
+            });
+        }
+        return result;
+    }
 }

@@ -82,12 +82,39 @@ export class DynamicCadLoader {
     private currentManifest: ModelManifest | null = null;
     private loadToken = 0;
     private studioFloor: StudioFloor | null = null;
+    private autoCenter = true;
+    private autoScale = true;
+    private targetRadius = 1.35;
 
     constructor(viewer: ViewerApp, manager: AssetManagerPlugin, roleBinder: MaterialRoleBinder, studioFloor?: StudioFloor | null) {
         this.viewer = viewer;
         this.manager = manager;
         this.roleBinder = roleBinder;
         this.studioFloor = studioFloor || null;
+    }
+
+    public setAutoCenter(enabled: boolean): void {
+        this.autoCenter = enabled;
+    }
+
+    public getAutoCenter(): boolean {
+        return this.autoCenter;
+    }
+
+    public setAutoScale(enabled: boolean): void {
+        this.autoScale = enabled;
+    }
+
+    public getAutoScale(): boolean {
+        return this.autoScale;
+    }
+
+    public setTargetRadius(radius: number): void {
+        this.targetRadius = Math.max(0.1, Math.min(10.0, radius));
+    }
+
+    public getTargetRadius(): number {
+        return this.targetRadius;
     }
 
     public setStudioFloor(floor: StudioFloor): void {
@@ -183,12 +210,13 @@ export class DynamicCadLoader {
 
             if (!isBuiltin) {
                 const settings = (manifest?.boundingDimensions as any)?.appliedSettings || {};
-                const autoScale = settings.autoScale !== false;
-                const autoCentre = settings.autoCentre !== false;
+                const autoScale = this.autoScale && settings.autoScale !== false;
+                const autoCentre = this.autoCenter && settings.autoCentre !== false;
 
-                // Scale to canonical jewelry radius ~1.35 if not already normalized
-                const scale = (autoScale && Math.abs(currentRadius - 1.35) > 0.05)
-                    ? (1.35 / currentRadius)
+                // Scale to configured canonical jewelry radius if autoScale enabled
+                const targetR = this.targetRadius;
+                const scale = (autoScale && Math.abs(currentRadius - targetR) > 0.05)
+                    ? (targetR / currentRadius)
                     : 1.0;
 
                 if (autoScale && scale !== 1.0) {
@@ -206,9 +234,10 @@ export class DynamicCadLoader {
                 if (this.currentModelRoot.updateMatrixWorld) {
                     this.currentModelRoot.updateMatrixWorld(true);
                 }
+                effectiveRadius = autoScale ? targetR : currentRadius;
+            } else {
+                effectiveRadius = 1.35;
             }
-
-            effectiveRadius = 1.35;
         } catch (e) {
             console.warn('[DynamicCadLoader] Normalization calculation fallback:', e);
             effectiveRadius = 1.35;
