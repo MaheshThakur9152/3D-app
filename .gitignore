@@ -1,0 +1,14 @@
+node_modules
+dist
+.parcel-cache
+.DS_Store
+*.log
+.env
+*.env
+storage/uploads/*
+storage/processed/*
+!storage/uploads/.gitkeep
+!storage/processed/.gitkeep
+server/storage/
+server/*.glb
+server/*.3dm
