@@ -7,11 +7,44 @@
 // Plane extent for contact shadow blur/vignette canvas.
 export const GROUND_SIZE = 120;
 
-// Finite visible square studio floor extent for jewelry models.
-export const STUDIO_FLOOR_SIZE = 5.0;
+// Visible presentation stage. This is deliberately separate from GROUND_SIZE,
+// which belongs to WebGi's contact-shadow depth pass and is not the visual stage.
+export const STUDIO_FLOOR_SIZE = 4.5;
 
-export function isHelperMesh(name: string | undefined, obj: { isGroundMesh?: boolean; userData?: { isGround?: boolean } }): boolean {
-    return /ground|floor|helper|grid|axis|shadow|gizmo|baker/i.test(name || '') || !!obj.isGroundMesh || !!obj.userData?.isGround;
+export interface StudioWorldConfig {
+    floorSize: number;
+    floorY: number;
+    floorColor: string;
+    floorRoughness: number;
+    floorMetalness: number;
+    targetProductRadius: number;
+    defaultCameraCoverage: number;
+    defaultCameraZoom: number;
+    defaultCameraElevationDeg: number;
+    defaultCameraAzimuthDeg: number;
+}
+
+export const STUDIO_WORLD_CONFIG: StudioWorldConfig = {
+    floorSize: 4.5,
+    floorY: 0.0,
+    floorColor: '#E9E9E7',
+    floorRoughness: 0.90,
+    floorMetalness: 0.0,
+    targetProductRadius: 1.35,
+    defaultCameraCoverage: 0.78,
+    defaultCameraZoom: 1.0,
+    defaultCameraElevationDeg: 30,
+    defaultCameraAzimuthDeg: -25
+};
+
+export function isHelperMesh(
+    name: string | undefined,
+    obj: { isGroundMesh?: boolean; userData?: { isGround?: boolean; isStudioEnvironment?: boolean } }
+): boolean {
+    return /ground|floor|helper|grid|axis|shadow|gizmo|baker/i.test(name || '') ||
+        !!obj.isGroundMesh ||
+        !!obj.userData?.isGround ||
+        !!obj.userData?.isStudioEnvironment;
 }
 
 // ContactShadowGroundPlugin depth map spans size / shadowScale (fixed 512px).

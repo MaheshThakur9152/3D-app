@@ -1,8 +1,10 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import fs from 'fs';
+import path from 'path';
 
 export default defineConfig({
+  assetsInclude: ['**/*.hdr'],
   server: {
     port: 3000,
     proxy: {
@@ -14,6 +16,25 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    {
+      name: 'serve-assets-dev',
+      configureServer(server) {
+        server.middlewares.use((req, res, next) => {
+          if (req.url && req.url.startsWith('/assets/')) {
+            const cleanUrl = req.url.split('?')[0];
+            const filePath = path.resolve(process.cwd(), '.' + cleanUrl);
+            if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+              res.setHeader('Content-Length', fs.statSync(filePath).size);
+              if (cleanUrl.endsWith('.hdr')) {
+                res.setHeader('Content-Type', 'application/octet-stream');
+              }
+              return fs.createReadStream(filePath).pipe(res);
+            }
+          }
+          next();
+        });
+      }
+    },
     {
       name: 'copy-assets-dir',
       closeBundle() {

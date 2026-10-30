@@ -26,12 +26,13 @@ import {
 } from "webgi";
 
 import { ModelManifest, ComponentRole } from "../cad/ModelManifest";
-import { MaterialRoleBinder, GemstonePreset } from "../cad/MaterialRoleBinder";
+import { MaterialRoleBinder, GemstonePreset, PHYSICAL_METAL_PRESETS } from "../cad/MaterialRoleBinder";
 import { DynamicCadLoader } from "../cad/DynamicCadLoader";
 import { CanvasPicker } from "../cad/CanvasPicker";
 import { StudioSettings } from "../ui/StudioSettings";
 import { autoFrameCamera } from "../cad/CameraFraming";
 import { StudioFloor } from "./StudioFloor";
+import { StudioWorld } from "./StudioWorld";
 
 export class ViewerHost {
     private static instance: ViewerHost | null = null;
@@ -43,11 +44,21 @@ export class ViewerHost {
     public picker: CanvasPicker | null = null;
     public studio: StudioSettings | null = null;
     public studioFloor: StudioFloor | null = null;
+    public studioWorld: StudioWorld | null = null;
 
     private initialized = false;
     private canvas: HTMLCanvasElement | null = null;
     private resizeObserver: ResizeObserver | null = null;
     private onSelectionChangeCallback?: (nodeId: string | null, component: any) => void;
+
+    private cameraFrameState = {
+        radius: 1.35,
+        center: { x: 0, y: 0.8, z: 0 },
+        zoom: 1.15,
+        coverage: 0.82,
+        elevationDeg: 28,
+        azimuthDeg: -25
+    };
 
     public static getInstance(): ViewerHost {
         if (!ViewerHost.instance) {
@@ -83,10 +94,16 @@ export class ViewerHost {
 
         const camera = viewer.scene.activeCamera;
 
-        // Preserved exact WebGi 8-pass rendering pipeline with clean neutral tonemapping
+        // Preserved exact WebGi 8-pass rendering pipeline with baseline vignette tonemapping
         await viewer.addPlugin(GBufferPlugin);
         await viewer.addPlugin(new ProgressivePlugin(32));
-        await viewer.addPlugin(new TonemapPlugin(true));
+        await viewer.addPlugin(new TonemapPlugin(true, false, [
+            `vec4 vignette(vec4 color, vec2 uv, float offset, float darkness){
+                uv = ( uv - vec2( 0.5 ) ) * vec2( offset );
+                return vec4( mix( color.rgb, vec3( 0.17, 0.00, 0.09 ), dot( uv, uv ) ), color.a );
+            }`,
+            `gl_FragColor = vignette(gl_FragColor, vUv, 1.1, 0.8);`
+        ]));
 
         const ssr = await viewer.addPlugin(SSRPlugin);
         const ssao = await viewer.addPlugin(SSAOPlugin);
@@ -108,19 +125,21 @@ export class ViewerHost {
             camera.setCameraOptions({ fov: 65 });
         }
 
-        // Studio Environment & Background (Pure White catalog default)
+        // Studio World (Persistent Floor at Y=0, 3-Point Light Rig, and Studio HDR Environment)
+        const studioWorld = new StudioWorld(viewer, manager);
+        this.studioWorld = studioWorld;
+        await studioWorld.init('white');
+        this.studioFloor = studioWorld.floor;
+
         const studio = new StudioSettings(viewer);
         studio.applyPreset('white');
         this.studio = studio;
-
-        const studioFloor = new StudioFloor(viewer);
-        this.studioFloor = studioFloor;
-        studio.setStudioFloor(studioFloor);
+        studio.setStudioFloor(this.studioFloor);
 
         // Stationary camera by default: autoRotate = false
         // Initial perspective framing calibrated for natural floor and jewelry visibility
-        camera.position.set(-0.35, 2.4, 8.5);
-        camera.target.set(0, -0.2, 0);
+        camera.position.set(-1.04, 2.85, 4.19);
+        camera.target.set(0, 0.75, 0);
         camera.positionUpdated(true);
         camera.targetUpdated(true);
 
@@ -128,11 +147,12 @@ export class ViewerHost {
             camera.controls.enabled = true;
             camera.controls.autoRotate = false; // STATIONARY BY DEFAULT
             camera.controls.autoRotateSpeed = 1.0;
-            camera.controls.minDistance = 0.8;
-            camera.controls.maxDistance = 25.0;
-            camera.controls.enablePan = false;
+            camera.controls.minDistance = 0.45;
+            camera.controls.maxDistance = 16.0;
+            camera.controls.enablePan = true;
+            camera.controls.enableZoom = true;
             camera.controls.screenSpacePanning = false;
-            camera.controls.target.set(0, -0.2, 0);
+            camera.controls.target.set(0, 0.8, 0);
             camera.controls.update();
         }
 
@@ -141,7 +161,7 @@ export class ViewerHost {
         // Initialize CAD integration modules
         const roleBinder = new MaterialRoleBinder(viewer);
         this.roleBinder = roleBinder;
-        this.dynamicLoader = new DynamicCadLoader(viewer, manager, roleBinder, studioFloor);
+        this.dynamicLoader = new DynamicCadLoader(viewer, manager, roleBinder, this.studioFloor);
 
         // Picking
         const picker = new CanvasPicker(viewer, canvas);
@@ -220,10 +240,7 @@ export class ViewerHost {
             return this.dynamicLoader.getCurrentModelRoot();
         }
 
-        const isBuiltin = glbUrl.includes('ring_webgi') || glbUrl.includes('ring2_webgi');
-        if (isBuiltin && root && root.rotation) {
-            root.rotation.set(-Math.PI / 2, 0, -Math.PI / 2);
-        }
+        // Single orientation conversion applied inside DynamicCadLoader.loadModel
         if (root && root.updateMatrixWorld) {
             root.updateMatrixWorld(true);
         }
@@ -233,47 +250,110 @@ export class ViewerHost {
         return root;
     }
 
-    public fitView(animate = true) {
+    public fitView(animate = true): void {
         if (!this.viewer) return;
+
         const camera = this.viewer.scene.activeCamera;
         let radius = 1.35;
+        let center = { x: 0, y: 0.8, z: 0 };
         const root = this.dynamicLoader?.getCurrentModelRoot();
+
         if (root && typeof root.traverse === 'function') {
-            if (root.updateMatrixWorld) root.updateMatrixWorld(true);
+            root.updateMatrixWorld?.(true);
             const box = new Box3();
-            let count = 0;
+            let meshCount = 0;
+
             root.traverse((child: any) => {
-                if (child.isMesh && child.visible) {
-                    const name = (child.name || '').toLowerCase();
-                    const isHelper = /ground|helper|grid|axis|shadow|gizmo|baker/i.test(name) ||
-                        child.isGroundMesh || child.userData?.isGround;
-                    if (!isHelper) {
-                        if (child.geometry) child.geometry.computeBoundingBox();
-                        box.expandByObject(child);
-                        count++;
-                    }
-                }
+                if (!child.isMesh || !child.visible) return;
+
+                const name = String(child.name || '').toLowerCase();
+                const isEnvironment = child.userData?.isStudioEnvironment || child.userData?.isStudioFloor;
+                const isHelper = /ground|floor|helper|grid|axis|shadow|gizmo|baker/.test(name)
+                    || child.isGroundMesh
+                    || child.userData?.isGround
+                    || isEnvironment;
+
+                if (isHelper) return;
+                child.geometry?.computeBoundingBox?.();
+                box.expandByObject(child);
+                meshCount += 1;
             });
-            if (count > 0) {
+
+            if (meshCount > 0 && !box.isEmpty()) {
                 const sphere = box.getBoundingSphere(new Sphere());
-                if (sphere.radius > 0.05) {
-                    radius = sphere.radius;
-                }
+                radius = Math.max(0.05, sphere.radius);
+                center = {
+                    x: sphere.center.x,
+                    y: sphere.center.y,
+                    z: sphere.center.z
+                };
             }
         } else {
             const manifest = this.dynamicLoader?.getCurrentManifest();
-            radius = (manifest?.boundingDimensions as any)?.normalizedRadius || manifest?.boundingDimensions?.boundingRadius || 1.35;
+            radius = (manifest?.boundingDimensions as any)?.normalizedRadius
+                || manifest?.boundingDimensions?.boundingRadius
+                || 1.35;
         }
 
-        autoFrameCamera(camera, camera.controls, radius, animate, () => {
-            camera.positionUpdated(true);
-            camera.targetUpdated(true);
-        });
+        this.cameraFrameState.radius = radius;
+        this.cameraFrameState.center = center;
+
+        autoFrameCamera(
+            camera,
+            camera.controls,
+            radius,
+            center,
+            null,
+            animate,
+            () => {
+                camera.positionUpdated(true);
+                camera.targetUpdated(true);
+            },
+            {
+                coverage: this.cameraFrameState.coverage,
+                zoom: this.cameraFrameState.zoom,
+                elevationDeg: this.cameraFrameState.elevationDeg,
+                azimuthDeg: this.cameraFrameState.azimuthDeg
+            }
+        );
     }
 
-    public resetView() {
-        if (!this.dynamicLoader) return;
-        this.dynamicLoader.resetView();
+    public setCameraZoom(value: number): void {
+        this.cameraFrameState.zoom = Math.max(0.70, Math.min(2.0, value));
+        this.fitView(false);
+    }
+
+    public setCameraView(view: 'front' | 'threeQuarter' | 'left' | 'right' | 'top' | 'macro'): void {
+        const presets = {
+            front: { azimuthDeg: 0, elevationDeg: 18 },
+            threeQuarter: { azimuthDeg: -25, elevationDeg: 28 },
+            left: { azimuthDeg: -90, elevationDeg: 22 },
+            right: { azimuthDeg: 90, elevationDeg: 22 },
+            top: { azimuthDeg: 0, elevationDeg: 82 },
+            macro: { azimuthDeg: -12, elevationDeg: 18 }
+        } as const;
+
+        const preset = presets[view] || presets.threeQuarter;
+        this.cameraFrameState.azimuthDeg = preset.azimuthDeg;
+        this.cameraFrameState.elevationDeg = preset.elevationDeg;
+        if (view === 'macro') {
+            this.cameraFrameState.zoom = 1.6;
+        }
+        this.fitView(false);
+    }
+
+    public setCameraAngles(azimuthDeg: number, elevationDeg: number): void {
+        this.cameraFrameState.azimuthDeg = azimuthDeg;
+        this.cameraFrameState.elevationDeg = Math.max(8, Math.min(82, elevationDeg));
+        this.fitView(false);
+    }
+
+    public resetView(): void {
+        this.cameraFrameState.zoom = 1.15;
+        this.cameraFrameState.coverage = 0.82;
+        this.cameraFrameState.azimuthDeg = -25;
+        this.cameraFrameState.elevationDeg = 28;
+        this.fitView(false);
     }
 
     public takeSnapshot(filename = 'mahesh3d-jewelry.png'): void {
@@ -310,6 +390,13 @@ export class ViewerHost {
         }
         this.roleBinder.applyMetalColor(colorHex, role || 'all_metals');
         this.roleBinder.applyMetalFinish(roughness, metalness, role || 'all_metals');
+    }
+
+    public applyMetalPreset(presetId: string, role?: string) {
+        const preset = PHYSICAL_METAL_PRESETS[presetId];
+        if (preset) {
+            this.setMetalPreset(preset.color, preset.roughness, preset.metalness, role);
+        }
     }
 
     public setGemstonePreset(preset: GemstonePreset, role?: string) {
@@ -443,16 +530,18 @@ export class ViewerHost {
     }
 
     public setStudioPreset(presetId: string, customColor?: string) {
-        if (!this.studio) return;
         if (customColor) {
-            this.studio.setCustomColor(customColor);
+            this.studioWorld?.setBackgroundColor(customColor);
+            this.studio?.setCustomColor(customColor);
         } else {
-            this.studio.applyPreset(presetId);
+            this.studioWorld?.setEnvironmentPreset(presetId);
+            this.studio?.applyPreset(presetId);
         }
     }
 
     public setGroundVisible(visible: boolean) {
         this.studio?.setGroundVisible(visible);
+        this.studioWorld?.setFloorVisible(visible);
     }
 
     public setGroundShadows(enabled: boolean) {
@@ -476,6 +565,7 @@ export class ViewerHost {
     }
 
     public setEnvironmentIntensity(val: number) {
+        this.studioWorld?.setEnvironmentIntensity(val);
         this.studio?.setEnvironmentIntensity(val);
     }
 

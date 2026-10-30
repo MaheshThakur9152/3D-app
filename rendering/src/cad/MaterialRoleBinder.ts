@@ -23,7 +23,7 @@ export const GEMSTONE_PRESETS: Record<string, GemstonePreset> = {
         name: 'Brilliant Diamond',
         color: '#CFECEC',
         refractiveIndex: 2.417,
-        dispersion: 0.044,
+        dispersion: 0.012,
         absorptionFactor: 1.0,
         envMapIntensity: 1.35
     },
@@ -101,6 +101,59 @@ export const GEMSTONE_PRESETS: Record<string, GemstonePreset> = {
     }
 };
 
+export interface MetalPreset {
+    id: string;
+    name: string;
+    color: string;
+    roughness: number;
+    metalness: number;
+}
+
+export const PHYSICAL_METAL_PRESETS: Record<string, MetalPreset> = {
+    yellow_gold: {
+        id: 'yellow_gold',
+        name: '18K Yellow Gold',
+        color: '#D9A441',
+        roughness: 0.00,
+        metalness: 1.0
+    },
+    rose_gold: {
+        id: 'rose_gold',
+        name: '18K Rose Gold',
+        color: '#C98770',
+        roughness: 0.00,
+        metalness: 1.0
+    },
+    white_gold: {
+        id: 'white_gold',
+        name: '18K White Gold',
+        color: '#D7D7D2',
+        roughness: 0.00,
+        metalness: 1.0
+    },
+    platinum: {
+        id: 'platinum',
+        name: 'Platinum 950',
+        color: '#BEC3C8',
+        roughness: 0.00,
+        metalness: 1.0
+    },
+    silver: {
+        id: 'silver',
+        name: 'Sterling Silver',
+        color: '#EAEAEA',
+        roughness: 0.00,
+        metalness: 1.0
+    },
+    black_rhodium: {
+        id: 'black_rhodium',
+        name: 'Black Rhodium',
+        color: '#2B2B2D',
+        roughness: 0.04,
+        metalness: 1.0
+    }
+};
+
 /**
  * Normalizes texture encodings according to standard color space rules:
  * - Color maps (diffuse, emissive): sRGB (3001)
@@ -160,9 +213,9 @@ export class MaterialRoleBinder {
     private currentAccentGemPreset: GemstonePreset = GEMSTONE_PRESETS.diamond;
 
     // Active Finish & Optical Parameters
-    private currentMetalRoughness = 0.18;
+    private currentMetalRoughness = 0.00;
     private currentDiamondBrilliance = 1.35;
-    private currentDiamondDispersion = 0.044;
+    private currentDiamondDispersion = 0.012;
 
     constructor(viewer: ViewerApp) {
         this.viewer = viewer;
@@ -203,7 +256,8 @@ export class MaterialRoleBinder {
                 this.meshToNodeIdMap.set(mesh, comp.nodeId);
 
                 if (isBuiltin) {
-                    this.assignMeshToRole(mesh, comp.role);
+                    // PRESERVE pre-authored GLB materials: group by role without modifying material
+                    this.groupMeshByRole(mesh, comp.role);
                 } else {
                     // Group mesh by role without forcing custom materials
                     this.groupMeshByRole(mesh, comp.role);
@@ -212,8 +266,8 @@ export class MaterialRoleBinder {
                     if (!mesh.material) {
                         mesh.material = new MeshStandardMaterial2({
                             color: new Color(0xcccccc),
-                            roughness: 0.5,
-                            metalness: 0.1
+                            roughness: 0.00,
+                            metalness: 1.0
                         });
                         mesh.userData.originalMaterial = mesh.material;
                     }
@@ -221,14 +275,17 @@ export class MaterialRoleBinder {
             }
         }
 
-        // Apply initial material settings only for built-in models
-        if (isBuiltin) {
-            this.applyCurrentColors();
-        } else {
+        // Apply initial material settings only for custom CAD models (built-in retains pre-authored GLB state)
+        if (!isBuiltin) {
             // Restore saved user configurations if present
             const saved = (manifest as any)?.savedMaterialAssignments;
             if (saved && typeof saved === 'object') {
                 this.applySavedMaterialAssignments(saved);
+            } else {
+                for (const comp of manifest.components) {
+                    const item = this.componentMap.get(comp.nodeId);
+                    if (item) this.assignMeshToRole(item.mesh, comp.role);
+                }
             }
         }
     }
@@ -317,7 +374,10 @@ export class MaterialRoleBinder {
             } else if (mat.color) {
                 mat.color = color;
             }
-            if (mat.roughness !== undefined) mat.roughness = this.currentMetalRoughness;
+            // Preserve pre-authored roughness / mirror polish (never force satin 0.18 onto mirror metal)
+            if (mat.roughness !== undefined) {
+                mat.roughness = Math.min(mat.roughness, this.currentMetalRoughness);
+            }
             if (mat.metalness !== undefined) mat.metalness = 1.0;
         }
     }
@@ -327,7 +387,13 @@ export class MaterialRoleBinder {
 
         const gemColor = new Color(preset.color);
         let mat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
-        const isDiamond = mat && (mat.isDiamondMaterial || mat.type === 'DiamondMaterial' || mat.isDiamond);
+        const isDiamond = mat && (
+            mat.isDiamondMaterial || 
+            mat.type === 'DiamondMaterial' || 
+            mat.isDiamond ||
+            mat.userData?.isDiamond ||
+            (mat.name && (mat.name.toLowerCase().includes('diamond') || mat.name.toLowerCase().includes('gem')))
+        );
 
         if (isDiamond) {
             // Update existing DiamondMaterial parameters in-place without rebuilding shader
@@ -336,10 +402,16 @@ export class MaterialRoleBinder {
             } else if (mat.color) {
                 mat.color = gemColor;
             }
-            mat.refractiveIndex = preset.refractiveIndex;
-            mat.dispersion = this.currentDiamondDispersion;
-            mat.absorptionFactor = preset.absorptionFactor;
-            mat.envMapIntensity = this.currentDiamondBrilliance;
+            if (preset.id !== 'diamond') {
+                mat.refractiveIndex = preset.refractiveIndex;
+                mat.dispersion = preset.dispersion;
+                mat.absorptionFactor = preset.absorptionFactor;
+            } else {
+                mat.refractiveIndex = 2.4;
+                if (mat.dispersion === undefined || mat.dispersion > 0.025) {
+                    mat.dispersion = 0.012;
+                }
+            }
             if (mat.userData) {
                 mat.userData.isDiamond = true;
                 mat.userData.isDiamondMaterialParameters = true;
@@ -363,7 +435,7 @@ export class MaterialRoleBinder {
                     isDiamondMaterialParameters: true,
                     color: gemColor,
                     refractiveIndex: preset.refractiveIndex,
-                    dispersion: preset.dispersion,
+                    dispersion: preset.id === 'diamond' ? 0.012 : preset.dispersion,
                     reflectivity: 0.5,
                     rayBounces: 5,
                     absorptionFactor: preset.absorptionFactor,
@@ -377,7 +449,7 @@ export class MaterialRoleBinder {
                 console.warn(`[MaterialRoleBinder] Diamond shader binding failed for ${mesh.name}, fallback to refractive standard:`, err);
                 if (mesh.material) {
                     mesh.material.color = gemColor;
-                    if (mesh.material.roughness !== undefined) mesh.material.roughness = 0.05;
+                    if (mesh.material.roughness !== undefined) mesh.material.roughness = 0.00;
                     if (mesh.material.metalness !== undefined) mesh.material.metalness = 0.0;
                     if (mesh.material.transmission !== undefined) mesh.material.transmission = 0.95;
                     if (mesh.material.ior !== undefined) mesh.material.ior = preset.refractiveIndex;
@@ -531,7 +603,7 @@ export class MaterialRoleBinder {
     }
 
     public setMetalRoughness(roughness: number): void {
-        this.currentMetalRoughness = Math.max(0.01, Math.min(1.0, roughness));
+        this.currentMetalRoughness = Math.max(0.00, Math.min(1.0, roughness));
         const metals = [...this.shankMeshes, ...this.headMeshes, ...this.prongMeshes, ...this.unassignedMeshes];
         for (const m of metals) {
             const mat = Array.isArray(m?.material) ? m.material[0] : m?.material;
@@ -545,11 +617,11 @@ export class MaterialRoleBinder {
 
     public setMetalFinish(finish: 'satin' | 'standard' | 'high_polish'): void {
         const map = {
-            satin: 0.45,
-            standard: 0.18,
-            high_polish: 0.04
+            satin: 0.35,
+            standard: 0.08,
+            high_polish: 0.00
         };
-        this.setMetalRoughness(map[finish] ?? 0.18);
+        this.setMetalRoughness(map[finish] ?? 0.00);
     }
 
     public setDiamondBrilliance(intensity: number): void {

@@ -8,6 +8,7 @@ import React, { useState, useRef } from 'react';
 import { ModelManifest, ComponentRole } from '../cad/ModelManifest';
 import { GEMSTONE_PRESETS, GemstonePreset } from '../cad/MaterialRoleBinder';
 import { SelectedComponentDetail } from '../inspector/InspectorPanel';
+import { ViewerHost } from '../studio/ViewerHost';
 
 interface RightInspectorProps {
     isOpen: boolean;
@@ -134,6 +135,7 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
     const [showAllMaterials, setShowAllMaterials] = useState(false);
     const [switchNodesEnabled, setSwitchNodesEnabled] = useState(true);
     const [hiddenNodes, setHiddenNodes] = useState<Record<string, boolean>>({});
+    const [cameraZoom, setCameraZoom] = useState(1.0);
 
     const filePickerRef = useRef<HTMLInputElement>(null);
 
@@ -280,20 +282,66 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
                     {!collapsedSections.camera && (
                         <div className="accordion-content">
                             <div className="action-buttons-grid">
-                                <button className="btn-action-outline" onClick={onResetCamera} title="Reset camera view to initial studio angle">
+                                <button
+                                    className="btn-action-outline"
+                                    onClick={() => {
+                                        setCameraZoom(1.0);
+                                        ViewerHost.getInstance().resetView();
+                                        onResetCamera();
+                                    }}
+                                    title="Reset camera view to initial studio angle"
+                                >
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                         <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                                         <path d="M3 3v5h5" />
                                     </svg>
                                     <span>Reset Camera</span>
                                 </button>
-                                <button className="btn-action-outline" onClick={onFitProduct} title="Fit and frame jewelry bounds">
+                                <button
+                                    className="btn-action-outline"
+                                    onClick={() => {
+                                        ViewerHost.getInstance().fitView(true);
+                                        onFitProduct();
+                                    }}
+                                    title="Fit and frame jewelry bounds"
+                                >
                                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                         <circle cx="12" cy="12" r="10" />
                                         <circle cx="12" cy="12" r="3" />
                                     </svg>
                                     <span>Frame Product</span>
                                 </button>
+                            </div>
+
+                            <div className="control-row">
+                                <span className="ctrl-label">Camera Zoom</span>
+                                <div className="control-slider-wrap">
+                                    <input
+                                        id="camera-zoom"
+                                        type="range"
+                                        min="0.70"
+                                        max="2.0"
+                                        step="0.05"
+                                        value={cameraZoom}
+                                        onChange={(e) => {
+                                            const next = Number(e.currentTarget.value);
+                                            setCameraZoom(next);
+                                            ViewerHost.getInstance().setCameraZoom(next);
+                                        }}
+                                    />
+                                    <span className="ctrl-val">{cameraZoom.toFixed(2)}x</span>
+                                </div>
+                            </div>
+
+                            <div className="control-row">
+                                <span className="ctrl-label">View Presets</span>
+                                <div className="btn-group-segmented" style={{ flexWrap: 'wrap', gap: '4px' }}>
+                                    <button type="button" className="btn-segment" onClick={() => ViewerHost.getInstance().setCameraView('front')}>Front</button>
+                                    <button type="button" className="btn-segment" onClick={() => ViewerHost.getInstance().setCameraView('threeQuarter')}>3/4</button>
+                                    <button type="button" className="btn-segment" onClick={() => ViewerHost.getInstance().setCameraView('left')}>Left</button>
+                                    <button type="button" className="btn-segment" onClick={() => ViewerHost.getInstance().setCameraView('right')}>Right</button>
+                                    <button type="button" className="btn-segment" onClick={() => ViewerHost.getInstance().setCameraView('top')}>Top</button>
+                                </div>
                             </div>
 
                             <div className="control-row">

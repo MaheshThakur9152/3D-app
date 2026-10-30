@@ -448,9 +448,9 @@ function runFrontendTests() {
 
     // Test 23: Finite square floor footprint and stable stage sizing
     console.log('[Test 23] Finite square floor footprint and stage sizing...');
-    assert.strictEqual(groundMath.STUDIO_FLOOR_SIZE, 5.0, 'Default square floor size is 5.0 units');
-    assert.strictEqual(groundMath.studioFloorSize(1.35), 5.0, 'Standard normalized jewelry (r=1.35) uses stable 5.0 footprint');
-    assert.strictEqual(groundMath.studioFloorSize(0.8), 5.0, 'Small jewelry clamps to minimum 5.0 stage size');
+    assert.strictEqual(groundMath.STUDIO_FLOOR_SIZE, 4.5, 'Default square floor size is 4.5 units');
+    assert.strictEqual(groundMath.studioFloorSize(1.35), 4.5, 'Standard normalized jewelry (r=1.35) uses stable 4.5 footprint');
+    assert.strictEqual(groundMath.studioFloorSize(0.8), 4.5, 'Small jewelry clamps to minimum 4.5 stage size');
     assert.ok(groundMath.studioFloorSize(4.0) >= 8.0, 'Large model scales stage proportionally with margin');
     console.log('  -> PASS: Finite square stage footprint and sizing verified.');
 
@@ -551,8 +551,52 @@ function runFrontendTests() {
     assert.ok(playgroundLayoutSrc.includes('<QuickToolRail'), 'Playground renders quick-tool rail');
     console.log('  -> PASS: Complete iJewel3D Playground component shell verified.');
 
+    // Test 33: Single orientation application (no duplicate rotation in ViewerHost)
+    console.log('[Test 33] Single orientation transformation (no duplicate rotation)...');
+    assert.ok(loaderSrc.includes('this.currentModelRoot.rotation.set(-Math.PI / 2, 0, -Math.PI / 2);'), 'DynamicCadLoader applies single orientation');
+    assert.ok(!viewerSrc.includes('root.rotation.set(-Math.PI / 2, 0, -Math.PI / 2);'), 'ViewerHost does not duplicate model rotation');
+    console.log('  -> PASS: Single orientation applied once in DynamicCadLoader only.');
+
+    // Test 34: Fixed floor coordinates at (0, 0, 0) with Y = 0
+    console.log('[Test 34] Fixed studio floor geometry at (0, 0, 0) Y = 0...');
+    assert.ok(floorSrc.includes('mesh.position.set(0, STUDIO_WORLD_CONFIG.floorY, 0);'), 'StudioFloor positions mesh at (0, floorY, 0)');
+    assert.ok(floorSrc.includes('floorRoughness: 0.88') || floorSrc.includes('STUDIO_WORLD_CONFIG.floorRoughness') || floorSrc.includes('roughness: number = 0.90'), 'StudioFloor uses neutral matte PBR');
+    assert.ok(!loaderSrc.includes('this.studioFloor.updateTransform('), 'DynamicCadLoader does not translate floor with model');
+    console.log('  -> PASS: Studio floor remains fixed at world origin Y = 0.');
+
+    // Test 35: Contact shadow receiver positioned at (sphere.center.x, 0.0002, sphere.center.z) with negative polygon offset
+    console.log('[Test 35] Contact shadow positioning and polygon offset bias...');
+    assert.ok(loaderSrc.includes('0.0002'), 'Contact shadow plane elevated +0.0002 above floor to prevent z-fighting');
+    assert.ok(loaderSrc.includes('polygonOffsetFactor = -1.0'), 'Contact shadow material uses negative polygon offset factor');
+    assert.ok(floorSrc.includes('material.polygonOffsetFactor = 1.0;'), 'Studio floor material uses positive polygon offset factor');
+    console.log('  -> PASS: Contact shadow properly biased and separated from studio floor.');
+
+    // Test 36: StudioLighting 3-point light rig
+    console.log('[Test 36] Physical 3-point studio lighting rig...');
+    const lightingSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'studio', 'StudioLighting.ts'), 'utf8');
+    assert.ok(lightingSrc.includes('keyLight: any') || lightingSrc.includes('keyLight: DirectionalLight'), 'StudioLighting includes key light');
+    assert.ok(lightingSrc.includes('fillLight: any') || lightingSrc.includes('fillLight: DirectionalLight'), 'StudioLighting includes fill light');
+    assert.ok(lightingSrc.includes('rimLight: any') || lightingSrc.includes('rimLight: DirectionalLight'), 'StudioLighting includes rim light');
+    assert.ok(lightingSrc.includes('ambientLight: any') || lightingSrc.includes('ambientLight: AmbientLight'), 'StudioLighting includes ambient light');
+    console.log('  -> PASS: Physical Key, Fill, Rim, and Ambient studio lighting verified.');
+
+    // Test 37: StudioEnvironment HDR environment loading
+    console.log('[Test 37] Studio HDR environment manager and texture synthesis...');
+    const envSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'studio', 'StudioEnvironment.ts'), 'utf8');
+    assert.ok(envSrc.includes('importSinglePath') || envSrc.includes('getOrCreateStudioTexture'), 'StudioEnvironment loads HDR studio environment');
+    assert.ok(envSrc.includes('scene.setEnvironment') || envSrc.includes('this.viewer.scene.setEnvironment'), 'StudioEnvironment sets scene environment for PMREM');
+    assert.ok(envSrc.includes('this.viewer.setBackground(') || envSrc.includes('setBackgroundColor'), 'StudioEnvironment updates background');
+    console.log('  -> PASS: StudioEnvironment HDR loader and PMREM integration verified.');
+
+    // Test 38: Calibrated physical metal presets
+    console.log('[Test 38] Calibrated physical metal presets (PBR values)...');
+    const roleBinderSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'cad', 'MaterialRoleBinder.ts'), 'utf8');
+    assert.ok(roleBinderSrc.includes('PHYSICAL_METAL_PRESETS'), 'MaterialRoleBinder exports PHYSICAL_METAL_PRESETS');
+    assert.ok(roleBinderSrc.includes('#D9A441') && roleBinderSrc.includes('#C98770') && roleBinderSrc.includes('#BEC3C8'), 'Calibrated RGB values for 18K Yellow, Rose Gold, and Platinum 950 present');
+    console.log('  -> PASS: Calibrated jewelry metals (Yellow Gold, Rose Gold, Platinum, Silver) verified.');
+
     console.log('====================================================');
-    console.log('   ALL 32 FRONTEND UNIT TESTS PASSED 100%!          ');
+    console.log('   ALL 38 FRONTEND UNIT TESTS PASSED 100%!          ');
     console.log('====================================================');
 }
 

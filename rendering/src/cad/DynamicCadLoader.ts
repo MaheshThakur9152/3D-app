@@ -208,40 +208,69 @@ export class DynamicCadLoader {
             const center = sphere.center;
             const currentRadius = Math.max(sphere.radius, 0.001);
 
-            if (!isBuiltin) {
-                const settings = (manifest?.boundingDimensions as any)?.appliedSettings || {};
-                const autoScale = this.autoScale && settings.autoScale !== false;
-                const autoCentre = this.autoCenter && settings.autoCentre !== false;
+            const settings = (manifest?.boundingDimensions as any)?.appliedSettings || {};
+            const autoScale = this.autoScale && settings.autoScale !== false;
+            const autoCentre = this.autoCenter && settings.autoCentre !== false;
 
-                // Scale to configured canonical jewelry radius if autoScale enabled
-                const targetR = this.targetRadius;
-                const scale = (autoScale && Math.abs(currentRadius - targetR) > 0.05)
-                    ? (targetR / currentRadius)
-                    : 1.0;
+            // Scale to canonical jewelry radius ~1.35 if autoScale enabled
+            const targetR = this.targetRadius;
+            const scale = (autoScale && Math.abs(currentRadius - targetR) > 0.05)
+                ? (targetR / currentRadius)
+                : 1.0;
 
-                if (autoScale && scale !== 1.0) {
-                    this.currentModelRoot.scale.set(scale, scale, scale);
-                }
-
-                if (autoCentre) {
-                    this.currentModelRoot.position.set(
-                        -center.x * scale,
-                        -center.y * scale,
-                        -center.z * scale
-                    );
-                }
-
-                if (this.currentModelRoot.updateMatrixWorld) {
-                    this.currentModelRoot.updateMatrixWorld(true);
-                }
-                effectiveRadius = autoScale ? targetR : currentRadius;
-            } else {
-                effectiveRadius = 1.35;
+            if (autoScale && scale !== 1.0) {
+                this.currentModelRoot.scale.set(scale, scale, scale);
             }
+
+            if (autoCentre) {
+                // Center horizontally at (0, 0) in world coordinates
+                this.currentModelRoot.position.x -= center.x * scale;
+                this.currentModelRoot.position.z -= center.z * scale;
+            }
+
+            // Align lowest vertex of model to upper surface of floor at Y = 0
+            if (this.currentModelRoot.updateMatrixWorld) {
+                this.currentModelRoot.updateMatrixWorld(true);
+            }
+
+            const alignedBox = new Box3();
+            let alignedCount = 0;
+            if (this.currentModelRoot && typeof this.currentModelRoot.traverse === 'function') {
+                this.currentModelRoot.traverse((child: any) => {
+                    if (child.isMesh && child.visible && !isHelperMesh(child.name, child)) {
+                        if (child.geometry) {
+                            child.geometry.computeBoundingBox();
+                            alignedBox.expandByObject(child);
+                            alignedCount++;
+                        }
+                    }
+                });
+            }
+            if (alignedCount === 0 && this.currentModelRoot && typeof this.currentModelRoot.traverse === 'function') {
+                alignedBox.setFromObject(this.currentModelRoot);
+            }
+
+            if (alignedBox.min.y !== Infinity && !isNaN(alignedBox.min.y)) {
+                // Ground product onto floor Y = 0
+                this.currentModelRoot.position.y += 0 - alignedBox.min.y;
+            }
+
+            if (this.currentModelRoot.updateMatrixWorld) {
+                this.currentModelRoot.updateMatrixWorld(true);
+            }
+            effectiveRadius = autoScale ? targetR : currentRadius;
         } catch (e) {
             console.warn('[DynamicCadLoader] Normalization calculation fallback:', e);
             effectiveRadius = 1.35;
         }
+
+        // Enable native object shadow participation for product meshes.
+        // Studio helpers/floor/contact-shadow receivers are deliberately excluded.
+        this.currentModelRoot.traverse((child: any) => {
+            if (!child.isMesh || !child.visible || isHelperMesh(child.name, child)) return;
+            child.castShadow = true;
+            child.receiveShadow = true;
+        });
 
         // 6. Discover components and bind materials
         const resolvedManifest = ComponentDiscovery.discoverComponents(this.currentModelRoot, manifest);
@@ -252,17 +281,56 @@ export class DynamicCadLoader {
         this.alignGround();
 
         // 8. Camera auto-framing with true dimensions
-        if (!isBuiltin) {
-            const camera = this.viewer.scene.activeCamera;
-            autoFrameCamera(camera, camera.controls, effectiveRadius, true, () => {
-                camera.positionUpdated(true);
-                camera.targetUpdated(true);
-            });
-        }
+        const camera = this.viewer.scene.activeCamera;
+        const autoBox = new Box3().setFromObject(this.currentModelRoot);
+        const autoSphere = autoBox.getBoundingSphere(new Sphere());
+        autoFrameCamera(camera, camera.controls, effectiveRadius, autoSphere.center, null, false, () => {
+            camera.positionUpdated(true);
+            camera.targetUpdated(true);
+        });
 
         // 9. Refresh rendering pipeline and reset accumulator
         this.viewer.renderer.refreshPipeline();
         this.viewer.renderer.reset();
+
+        // Diagnostic audit logging (Phase 1.2)
+        let meshCount = 0;
+        let visibleMeshCount = 0;
+        const materials = new Set();
+        const diagBox = new Box3();
+        if (this.currentModelRoot && typeof this.currentModelRoot.traverse === 'function') {
+            this.currentModelRoot.traverse((c: any) => {
+                if (c.isMesh) {
+                    meshCount++;
+                    if (c.visible) visibleMeshCount++;
+                    if (c.material) {
+                        if (Array.isArray(c.material)) c.material.forEach((m: any) => materials.add(m));
+                        else materials.add(c.material);
+                    }
+                    if (c.geometry) {
+                        c.geometry.computeBoundingBox();
+                        diagBox.expandByObject(c);
+                    }
+                }
+            });
+        }
+        const diagSphere = diagBox.getBoundingSphere(new Sphere());
+        console.log('[MODEL_DIAGNOSTICS]', JSON.stringify({
+            requestedUrl: glbUrl,
+            importSucceeded: !!this.currentModelRoot,
+            rootExists: !!this.currentModelRoot,
+            rootName: this.currentModelRoot?.name,
+            rootParent: this.currentModelRoot?.parent?.name || this.currentModelRoot?.parent?.type,
+            meshCount,
+            visibleMeshCount,
+            materialCount: materials.size,
+            rootPosition: this.currentModelRoot?.position,
+            rootRotation: this.currentModelRoot?.rotation,
+            rootScale: this.currentModelRoot?.scale,
+            boundsMin: diagBox.min,
+            boundsMax: diagBox.max,
+            boundingSphereRadius: diagSphere.radius
+        }, null, 2));
 
         return this.currentModelRoot;
     }
@@ -385,23 +453,29 @@ export class DynamicCadLoader {
 
                 const groundMesh = ground._mesh || ground.mesh?.modelObject;
                 if (groundMesh) {
-                    // Contact shadow sits slightly above floor to prevent coplanar depth artifacts
-                    groundMesh.position.set(sphere.center.x, box.min.y + 0.0002, sphere.center.z);
+                    // Product has already been grounded at Y=0. Keep the WebGi contact receiver
+                    // just above the fixed studio floor. Do NOT overwrite its scale: the installed
+                    // ContactShadowGroundPlugin owns its internal mesh transform through `size`.
+                    groundMesh.position.set(0, 0.0002, 0);
+                    // Keep the known horizontal orientation from the current working scene.
                     groundMesh.rotation.set(-Math.PI / 2, 0, 0);
-                    groundMesh.scale.set(GROUND_SIZE, -GROUND_SIZE, GROUND_SIZE);
+
                     if (groundMesh.material) {
                         const mat = (groundMesh.material as any).materialObject || groundMesh.material;
                         mat.polygonOffset = true;
                         mat.polygonOffsetFactor = -1.0;
                         mat.polygonOffsetUnits = -1.0;
+                        mat.roughness = 1.0;
+                        mat.metalness = 0.0;
+                        if (mat.userData) {
+                            mat.userData.ssreflDisabled = true;
+                            mat.userData.ssreflNonPhysical = true;
+                        }
                     }
                     groundMesh.updateMatrixWorld?.(true);
                 }
 
-                if (this.studioFloor) {
-                    this.studioFloor.updateTransform(sphere.center.x, box.min.y, sphere.center.z, r);
-                }
-
+                // Studio floor remains persistent at world origin; only update shadow receiver
                 ground.refreshOptions();
                 this.viewer.scene.setDirty();
                 this.viewer.renderer.reset();
@@ -418,8 +492,8 @@ export class DynamicCadLoader {
         this.currentModelRoot.traverse((child: any) => {
             if (child.isMesh && child.visible) {
                 const name = (child.name || '').toLowerCase();
-                const isHelper = /ground|helper|grid|axis|shadow|gizmo|baker/i.test(name) ||
-                    child.isGroundMesh || child.userData?.isGround;
+                const isHelper = /ground|floor|helper|grid|axis|shadow|gizmo|baker/i.test(name) ||
+                    child.isGroundMesh || child.userData?.isGround || child.userData?.isStudioEnvironment;
                 if (!isHelper) {
                     if (child.geometry) child.geometry.computeBoundingBox();
                     box.expandByObject(child);
@@ -433,7 +507,7 @@ export class DynamicCadLoader {
         const radius = Math.max(sphere.radius, 0.5);
         const camera = this.viewer.scene.activeCamera;
         if (camera) {
-            autoFrameCamera(camera, camera.controls, radius, true, () => {
+            autoFrameCamera(camera, camera.controls, radius, sphere.center, null, true, () => {
                 camera.positionUpdated(true);
                 camera.targetUpdated(true);
             });
@@ -443,12 +517,12 @@ export class DynamicCadLoader {
     public resetView(): void {
         const camera = this.viewer.scene.activeCamera;
         if (!camera) return;
-        camera.position.set(-0.35, 2.4, 8.5);
-        camera.target.set(0, -0.2, 0);
+        camera.position.set(-1.04, 2.85, 4.19);
+        camera.target.set(0, 0.75, 0);
         camera.positionUpdated(true);
         camera.targetUpdated(true);
         if (camera.controls) {
-            camera.controls.target.set(0, -0.2, 0);
+            camera.controls.target.set(0, 0.75, 0);
             camera.controls.update();
         }
     }

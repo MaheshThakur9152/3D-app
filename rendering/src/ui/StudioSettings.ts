@@ -18,7 +18,7 @@ export const STUDIO_PRESETS: Record<string, StudioPreset> = {
     white: {
         id: 'white',
         name: 'Pure White',
-        hex: '#ffffff',
+        hex: '#ebebf0',
         description: 'Clean high-key commercial jewelry catalog'
     },
     neutral: {
@@ -143,7 +143,8 @@ export class StudioSettings {
         const mat = ground.material || (groundMesh && groundMesh.material);
         if (mat) {
             const matObj = (mat as any).materialObject || mat;
-            matObj.roughness = this.config.groundReflections ? 0.25 : 1.0;
+            // Contact shadow is strictly an alpha-vignette shadow overlay - never an SSR mirror
+            matObj.roughness = 1.0;
             matObj.metalness = 0.0;
             if (this.config.groundShadows) {
                 matObj.opacity = this.config.shadowIntensity;
@@ -151,16 +152,16 @@ export class StudioSettings {
                 matObj.opacity = 0.0;
             }
             if (matObj.userData) {
-                matObj.userData.ssreflDisabled = !this.config.groundReflections;
-                matObj.userData.ssreflNonPhysical = !this.config.groundReflections;
+                matObj.userData.ssreflDisabled = true;
+                matObj.userData.ssreflNonPhysical = true;
             }
             matObj.needsUpdate = true;
         }
 
         ground.tonemapGround = true;
-        ground.visible = this.config.groundVisible;
+        ground.visible = this.config.groundShadows;
         ground.contactShadows = this.config.groundShadows;
-        ground.groundReflection = this.config.groundReflections;
+        ground.groundReflection = false;
         if ('blurAmount' in ground) {
             ground.blurAmount = this.config.shadowSoftness;
         }
@@ -176,14 +177,7 @@ export class StudioSettings {
 
     public setGroundVisible(visible: boolean): void {
         this.config.groundVisible = visible;
-        const ground = this.getGround();
-        if (ground) {
-            ground.visible = visible;
-            ground.refreshOptions();
-        }
-        if (this.studioFloor) {
-            this.studioFloor.setVisible(visible);
-        }
+        this.studioFloor?.setVisible(visible);
         this.viewer.scene.setDirty();
         this.viewer.renderer.reset();
         this.saveSettings();
@@ -193,6 +187,7 @@ export class StudioSettings {
         this.config.groundShadows = enabled;
         const ground = this.getGround();
         if (ground) {
+            ground.visible = enabled;
             ground.contactShadows = enabled;
             const groundMesh = ground._mesh || ground.mesh?.modelObject || ground.mesh;
             const mat = ground.material || (groundMesh && groundMesh.material);

@@ -1,42 +1,40 @@
 /**
  * StudioFloor.ts
  * Finite, visible square 3D studio floor.
- * Independent from ContactShadowGroundPlugin shadow overlay.
+ * Persistent world object: fixed at (0, 0, 0) on the horizontal XZ plane at Y = 0.
+ * Independent of imported model lifecycle and position.
  */
 
 import { ViewerApp, Mesh, PlaneGeometry, MeshStandardMaterial2, Color } from "webgi";
-import { STUDIO_FLOOR_SIZE, studioFloorSize } from "./groundMath";
-
-export interface StudioFloorConfig {
-    size: number;
-    color: string;
-    roughness: number;
-    metalness: number;
-    visible: boolean;
-}
+import { STUDIO_WORLD_CONFIG } from "./groundMath";
 
 export class StudioFloor {
     private viewer: ViewerApp;
     private floorMesh: Mesh | null = null;
     private visible = true;
-    private color = '#eeeeee';
-    private roughness = 0.88;
-    private metalness = 0.0;
-    private size = STUDIO_FLOOR_SIZE;
-    private lastPosition = { x: 0, y: 0, z: 0 };
-    private lastRadius = 1.35;
+    private size: number = STUDIO_WORLD_CONFIG.floorSize;
+    private geometryBaseSize: number = STUDIO_WORLD_CONFIG.floorSize;
+    private color: string = STUDIO_WORLD_CONFIG.floorColor;
+    private roughness: number = STUDIO_WORLD_CONFIG.floorRoughness;
+    private metalness: number = STUDIO_WORLD_CONFIG.floorMetalness;
 
     constructor(viewer: ViewerApp) {
         this.viewer = viewer;
-        this.init();
     }
 
-    private init(): void {
+    public init(size = 4.5, color = '#E9E9E7'): void {
+        this.size = size;
+        this.geometryBaseSize = size;
+        this.color = color;
+        this.mount();
+    }
+
+    public mount(): void {
         if (this.floorMesh) return;
 
-        const geometry = new PlaneGeometry(1, 1, 1, 1);
+        const geometry = new PlaneGeometry(this.geometryBaseSize, this.geometryBaseSize, 1, 1);
         const material = new MeshStandardMaterial2({
-            color: new Color(this.color),
+            color: new Color(this.color).convertSRGBToLinear(),
             roughness: this.roughness,
             metalness: this.metalness,
             depthWrite: true,
@@ -46,7 +44,7 @@ export class StudioFloor {
         // Visible from all perspective viewing angles
         material.side = 2; // DoubleSide
 
-        // Depth bias pushes floor backwards in depth buffer to prevent z-fighting with shadow overlay
+        // Depth bias pushes floor backwards in depth buffer to prevent z-fighting with contact-shadow overlay
         material.polygonOffset = true;
         material.polygonOffsetFactor = 1.0;
         material.polygonOffsetUnits = 1.0;
@@ -54,24 +52,21 @@ export class StudioFloor {
         const mesh = new Mesh(geometry, material);
         mesh.name = 'Studio_Floor_Mesh';
         (mesh as any).isGroundMesh = true;
-        mesh.userData = { isGround: true };
+        mesh.userData = {
+            isGround: true,
+            isStudioFloor: true,
+            isStudioEnvironment: true
+        };
+
+        // Floor lies flat on horizontal XZ plane at fixed height Y = 0
         mesh.rotation.set(-Math.PI / 2, 0, 0);
-        mesh.scale.set(this.size, this.size, 1);
-        mesh.receiveShadow = false;
+        mesh.position.set(0, STUDIO_WORLD_CONFIG.floorY, 0);
         mesh.castShadow = false;
+        mesh.receiveShadow = true;
 
-        this.viewer.scene.add(mesh);
+        const sceneTarget = (this.viewer.scene as any)?.modelRoot || this.viewer.scene;
+        sceneTarget.add(mesh);
         this.floorMesh = mesh;
-    }
-
-    public updateTransform(centerX: number, lowestY: number, centerZ: number, radius = 1.35): void {
-        if (!this.floorMesh) return;
-        this.lastPosition = { x: centerX, y: lowestY, z: centerZ };
-        this.lastRadius = radius;
-        const currentSize = Math.max(this.size, studioFloorSize(radius));
-        this.floorMesh.position.set(centerX, lowestY, centerZ);
-        this.floorMesh.scale.set(currentSize, currentSize, 1);
-        this.floorMesh.updateMatrixWorld?.(true);
     }
 
     public setVisible(visible: boolean): void {
@@ -114,27 +109,34 @@ export class StudioFloor {
     }
 
     public setSize(size: number): void {
-        this.size = Math.max(2, Math.min(20, size));
+        const nextSize = Math.max(3.0, Math.min(12.0, size));
+        this.size = nextSize;
+
         if (this.floorMesh) {
-            const finalSize = Math.max(this.size, studioFloorSize(this.lastRadius));
-            this.floorMesh.scale.set(finalSize, finalSize, 1);
+            const ratio = nextSize / this.geometryBaseSize;
+            this.floorMesh.scale.set(ratio, ratio, 1);
             this.floorMesh.updateMatrixWorld?.(true);
             this.viewer.scene.setDirty();
             this.viewer.renderer.reset();
         }
     }
 
-    public getConfig(): StudioFloorConfig {
-        return {
-            size: this.size,
-            color: this.color,
-            roughness: this.roughness,
-            metalness: this.metalness,
-            visible: this.visible
-        };
+    public getSize(): number {
+        return this.size;
     }
 
     public getMesh(): Mesh | null {
         return this.floorMesh;
+    }
+
+    public dispose(): void {
+        if (!this.floorMesh) return;
+        this.floorMesh.removeFromParent();
+        if (this.floorMesh.geometry) this.floorMesh.geometry.dispose();
+        if (this.floorMesh.material) {
+            const mat = (this.floorMesh.material as any).materialObject || this.floorMesh.material;
+            mat.dispose?.();
+        }
+        this.floorMesh = null;
     }
 }
